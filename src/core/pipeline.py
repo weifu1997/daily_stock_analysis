@@ -38,6 +38,7 @@ from src.report_language import (
 from src.search_service import SearchService
 from src.services.social_sentiment_service import SocialSentimentService
 from src.services.candidate_enrichment import CandidateEnrichmentService
+from src.services.mx_name_cache import get_cached_stock_name
 from src.services.portfolio_service import PortfolioService
 from src.integrations.mx.client import MxClient
 from src.integrations.mx.search_adapter import MxSearchAdapter
@@ -274,8 +275,8 @@ class StockAnalysisPipeline:
         stock_name = code
         try:
             self._emit_progress(18, f"{code}：正在获取行情与筹码数据")
-            # 获取股票名称（先走轻量名称路径，后续若 realtime_quote 有 name 再覆盖）
-            stock_name = self.fetcher_manager.get_stock_name(code, allow_realtime=False)
+            # 获取股票名称：先命中妙想预选池缓存，再走轻量名称路径，后续若 realtime_quote 有 name 再覆盖
+            stock_name = get_cached_stock_name(code) or self.fetcher_manager.get_stock_name(code, allow_realtime=False)
 
             # Step 1: 获取实时行情（量比、换手率等）- 使用统一入口，自动故障切换
             realtime_quote = None
@@ -284,8 +285,8 @@ class StockAnalysisPipeline:
                 if self.config.enable_realtime_quote:
                     realtime_quote = self.fetcher_manager.get_realtime_quote(code, log_final_failure=False)
                     if realtime_quote:
-                        # 使用实时行情返回的真实股票名称
-                        if realtime_quote.name:
+                        # 使用实时行情返回的真实股票名称，但优先保留妙想缓存中的名字
+                        if realtime_quote.name and not get_cached_stock_name(code):
                             stock_name = realtime_quote.name
                         current_price = getattr(realtime_quote, 'current_price', None) or getattr(realtime_quote, 'close', None) or getattr(realtime_quote, 'price', None)
                         # 兼容不同数据源的字段（有些数据源可能没有 volume_ratio）
@@ -302,8 +303,8 @@ class StockAnalysisPipeline:
                 logger.warning(f"{stock_name}({code}) 实时行情链路异常，已降级为历史收盘价继续分析: {e}")
 
             # 如果还是没有名称，使用代码作为名称
-            if not stock_name:
-                stock_name = f'股票{code}'
+            if not stock_name or stock_name == code:
+                stock_name = get_cached_stock_name(code) or f'股票{code}'
 
             # Step 2: 获取日线与筹码分布所需数据
             daily_df = None

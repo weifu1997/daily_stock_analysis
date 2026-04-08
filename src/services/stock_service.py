@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 
 from src.repositories.stock_repo import StockRepository
+from src.services.mx_name_cache import get_cached_stock_name
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ class StockService:
                 return {"stock_code": stock_code, "period": period, "data": []}
             
             # 获取股票名称
-            stock_name = manager.get_stock_name(stock_code)
+            stock_name = get_cached_stock_name(stock_code) or manager.get_stock_name(stock_code)
             
             # 转换为响应格式
             data = []
