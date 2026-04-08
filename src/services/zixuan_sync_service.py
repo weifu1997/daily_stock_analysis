@@ -15,6 +15,10 @@ import logging
 from dataclasses import dataclass
 from typing import List, Sequence
 
+
+class ZixuanSyncError(RuntimeError):
+    """妙想自选同步致命错误。"""
+
 from data_provider.base import canonical_stock_code
 
 logger = logging.getLogger(__name__)
@@ -67,9 +71,10 @@ class ZixuanSyncResult:
 
 
 class ZixuanSyncService:
-    def __init__(self, client, allow_delete: bool = True) -> None:
+    def __init__(self, client, allow_delete: bool = True, strict: bool = False) -> None:
         self.client = client
         self.allow_delete = allow_delete
+        self.strict = strict
 
     def _normalize_codes(self, codes: Sequence[str]) -> List[str]:
         out: List[str] = []
@@ -108,6 +113,9 @@ class ZixuanSyncService:
         failed = list(add_result.get("failed", []))
         fail_details = dict(add_result.get("fail_details", {}) or {})
 
+        if self.strict and failed:
+            raise ZixuanSyncError(f"妙想自选新增失败: {failed}")
+
         deleted: List[str] = []
         skipped: List[str] = []
         delete_fail_details = {}
@@ -116,6 +124,8 @@ class ZixuanSyncService:
             deleted = list(del_result.get("deleted", []))
             skipped = list(del_result.get("failed", []))
             delete_fail_details = dict(del_result.get("fail_details", {}) or {})
+            if self.strict and skipped:
+                raise ZixuanSyncError(f"妙想自选删除失败: {skipped}")
         else:
             skipped = list(to_delete)
 

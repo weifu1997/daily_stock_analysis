@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Dict, Iterable, List, Optional, Sequence
 
 from data_provider.base import canonical_stock_code
@@ -108,8 +109,10 @@ class MxZixuanClient:
             last_result = None
             last_error = None
             ok = False
-            for variant in variants:
+            for variant_index, variant in enumerate(variants):
                 try:
+                    if variant_index > 0:
+                        time.sleep(0.3)
                     result = skill.manage_self_select(self.apikey, f"把{variant}添加到我的自选股列表")
                     last_result = result
                     ok = isinstance(result, dict) and (result.get('status') == 0 or result.get('code') == 0)
@@ -152,8 +155,10 @@ class MxZixuanClient:
             last_result = None
             last_error = None
             ok = False
-            for variant in variants:
+            for variant_index, variant in enumerate(variants):
                 try:
+                    if variant_index > 0:
+                        time.sleep(0.3)
                     result = skill.manage_self_select(self.apikey, f"把{variant}从我的自选股列表删除")
                     last_result = result
                     ok = isinstance(result, dict) and (result.get('status') == 0 or result.get('code') == 0)

@@ -556,7 +556,7 @@ def run_full_analysis(
         if mx_apikey:
             try:
                 zixuan_client = MxZixuanClient(apikey=mx_apikey)
-                zixuan_service = ZixuanSyncService(client=zixuan_client, allow_delete=True)
+                zixuan_service = ZixuanSyncService(client=zixuan_client, allow_delete=True, strict=False)
                 portfolio_codes = _resolve_portfolio_stock_codes()
                 sync_result = zixuan_service.sync(
                     candidate_codes=stock_codes or [],
@@ -567,7 +567,7 @@ def run_full_analysis(
                 logger.info(zixuan_sync_summary)
                 logger.info(zixuan_sync_detail)
             except Exception as exc:
-                logger.warning('妙想自选同步失败: %s', exc, exc_info=True)
+                logger.warning('妙想自选同步失败（已降级，不影响主链）: %s', exc, exc_info=True)
         else:
             logger.warning('MX_APIKEY 未配置，跳过 zixuan 同步')
 
