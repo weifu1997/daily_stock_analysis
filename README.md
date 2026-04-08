@@ -169,9 +169,9 @@
 | Secret 名称 | 说明 | 必填 |
 |------------|------|:----:|
 | `STOCK_LIST` | 自选股代码，如 `600519,hk00700,AAPL,TSLA`；为空时可由妙想预选池回退补齐 | ✅ |
-| `MX_PRESELECT_PROFILE` | 妙想预选池一键风格：`trend` / `fundamental` / `basic` | 可选 |
+| `MX_PRESELECT_PROFILE` | 妙想预选池一键风格：`trend` / `fundamental` / `basic`。**方案A：生产主链只认 `.env` / 持久化配置**，若同时配置了 `MX_PRESELECT_QUERY`，则本项仅作为回退模板 | 可选 |
 | `MX_PRESELECT_PRIORITY` | 优先使用妙想智能选股预选池生成股票列表，回退到 `STOCK_LIST` | 可选 |
-| `MX_PRESELECT_QUERY` | 妙想预选股自然语言条件，如 `A股 正常交易 非ST 非停牌 低估值 高ROE 业绩稳定 经营现金流良好 财务健康 排除科创板 排除创业板 排除北交所` | 可选 |
+| `MX_PRESELECT_QUERY` | 妙想预选股自然语言条件，如 `A股 正常交易 非ST 非停牌 低估值 高ROE 业绩稳定 经营现金流良好 财务健康 排除科创板 排除创业板 排除北交所`。**方案A：生产主链优先使用本项** | 可选 |
 | `MX_PRESELECT_LIMIT` | 妙想预选池最多取前 N 只股票，默认 `50` | 可选 |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) 搜索 API（新闻搜索） | 推荐 |
 | `MINIMAX_API_KEYS` | [MiniMax](https://platform.minimaxi.com/) Coding Plan Web Search（结构化搜索结果） | 可选 |
@@ -184,7 +184,7 @@
 | `TICKFLOW_API_KEY` | [TickFlow](https://tickflow.org) API Key（增强 A 股大盘复盘指数；若套餐支持标的池查询，也可增强市场统计） | 可选 |
 | `PREFETCH_REALTIME_QUOTES` | 实时行情预取开关：设为 `false` 可禁用全市场预取（默认 `true`） | 可选 |
 | `WECHAT_MSG_TYPE` | 企微消息类型，默认 markdown，支持配置 text 类型，发送纯 markdown 文本 | 可选 |
-| `NEWS_STRATEGY_PROFILE` | 新闻策略窗口档位：`ultra_short`(1天) / `short`(3天) / `medium`(7天) / `long`(30天)，默认 `short` | 可选 |
+| `NEWS_STRATEGY_PROFILE` | 新闻策略窗口档位：`ultra_short`(1天) / `short`(3天) / `medium`(7天) / `long`(30天)，默认 `short`。**方案A：生产主链只认 `.env` / 持久化配置`，运行日志会打印最终生效 profile** | 可选 |
 | `NEWS_MAX_AGE_DAYS` | 新闻最大时效上限（天），默认 3；实际窗口 `effective_days = min(profile_days, NEWS_MAX_AGE_DAYS)`，例如 `ultra_short(1)` + `7` 仍为 `1` 天 | 可选 |
 | `BIAS_THRESHOLD` | 乖离率阈值（%），默认 5.0，超过提示不追高；强势趋势股自动放宽 | 可选 |
 | `AGENT_MODE` | 开启 Agent 策略问股模式（内部统一命名为 skill，`true`/`false`，默认 false） | 可选 |

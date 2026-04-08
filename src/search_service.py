@@ -1980,6 +1980,12 @@ class SearchService:
             self.news_strategy_profile,
             NEWS_STRATEGY_WINDOWS["short"],
         )
+        logger.info(
+            "NEWS_STRATEGY_PROFILE 生效: source=env_or_persisted profile=%s profile_days=%s effective_window=%s",
+            self.news_strategy_profile,
+            self.news_profile_days,
+            self.news_window_days,
+        )
 
         cfg = get_config()
         self.mx_search_primary_provider = (getattr(cfg, "mx_search_primary_provider", "mx") or "mx").strip().lower()
