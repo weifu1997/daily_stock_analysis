@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 class MxZixuanClient:
     """妙想自选客户端。"""
 
+    RATE_LIMIT_CODE = 112
+    RETRY_SLEEP_SECONDS = (2.0, 5.0, 10.0)
+    BETWEEN_CODES_SLEEP_SECONDS = 0.5
+    BETWEEN_VARIANTS_SLEEP_SECONDS = 0.3
+
     @staticmethod
     def _code_variants(code: str) -> List[str]:
         """为自选同步生成更稳的代码尝试顺序。"""
@@ -93,18 +98,63 @@ class MxZixuanClient:
             logger.warning("获取妙想自选列表失败: %s", exc)
             return []
 
-    def add_codes(self, codes: Sequence[str]) -> Dict[str, object]:
+    @staticmethod
+    def _result_code(result: object) -> Optional[int]:
+        if not isinstance(result, dict):
+            return None
+        for key in ("status", "code"):
+            value = result.get(key)
+            if value is None:
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def _is_success(self, result: object) -> bool:
+        code = self._result_code(result)
+        return code == 0
+
+    def _with_rate_limit_retry(self, action_desc: str, func):
+        last_result = None
+        last_error = None
+        for attempt, retry_sleep in enumerate((0.0, *self.RETRY_SLEEP_SECONDS), start=1):
+            if retry_sleep > 0:
+                logger.warning("%s 命中频控，等待 %.1fs 后第 %d 次重试", action_desc, retry_sleep, attempt)
+                time.sleep(retry_sleep)
+            try:
+                result = func()
+                last_result = result
+                if self._result_code(result) == self.RATE_LIMIT_CODE:
+                    continue
+                return result, last_error
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                if "Read timed out" in last_error or "请求频率过高" in last_error:
+                    continue
+                return last_result, last_error
+        return last_result, last_error
+
+    def _manage_codes(self, codes: Sequence[str], action: str) -> Dict[str, object]:
         skill = self._load_skill()
         if skill is None:
-            return {"success": False, "added": [], "failed": list(codes), "message": "skill unavailable", "fail_details": {}}
+            empty_key = "added" if action == "add" else "deleted"
+            return {"success": False, empty_key: [], "failed": list(codes), "message": "skill unavailable", "fail_details": {}}
 
-        added: List[str] = []
+        done_key = "added" if action == "add" else "deleted"
+        action_label = "添加" if action == "add" else "删除"
+        action_template = "把{variant}添加到我的自选股列表" if action == "add" else "把{variant}从我的自选股列表删除"
+
+        done: List[str] = []
         failed: List[str] = []
         fail_details: Dict[str, object] = {}
-        for code in codes:
+        for code_index, code in enumerate(codes):
             code = str(code).strip()
             if not code:
                 continue
+            if code_index > 0:
+                time.sleep(self.BETWEEN_CODES_SLEEP_SECONDS)
             variants = self._code_variants(code)
             last_result = None
             last_error = None
@@ -112,14 +162,18 @@ class MxZixuanClient:
             for variant_index, variant in enumerate(variants):
                 try:
                     if variant_index > 0:
-                        time.sleep(0.3)
-                    result = skill.manage_self_select(self.apikey, f"把{variant}添加到我的自选股列表")
+                        time.sleep(self.BETWEEN_VARIANTS_SLEEP_SECONDS)
+                    result, retry_error = self._with_rate_limit_retry(
+                        f"妙想自选{action_label}: code={code} variant={variant}",
+                        lambda variant=variant: skill.manage_self_select(self.apikey, action_template.format(variant=variant)),
+                    )
                     last_result = result
-                    ok = isinstance(result, dict) and (result.get('status') == 0 or result.get('code') == 0)
+                    last_error = retry_error
+                    ok = self._is_success(result)
                     if ok:
-                        added.append(code)
+                        done.append(code)
                         if variant != code:
-                            logger.info("妙想自选添加成功（fallback）: %s -> %s", code, variant)
+                            logger.info("妙想自选%s成功（fallback）: %s -> %s", action_label, code, variant)
                         break
                 except Exception as exc:
                     last_error = f"{type(exc).__name__}: {exc}"
@@ -130,57 +184,17 @@ class MxZixuanClient:
                     "last_result": last_result,
                     "last_error": last_error,
                 }
-                logger.warning("妙想自选添加失败: code=%s variants=%s last_error=%s last_result=%s", code, variants, last_error, last_result)
+                logger.warning("妙想自选%s失败: code=%s variants=%s last_error=%s last_result=%s", action_label, code, variants, last_error, last_result)
 
         return {
             "success": not failed,
-            "added": added,
+            done_key: done,
             "failed": failed,
             "fail_details": fail_details,
         }
+
+    def add_codes(self, codes: Sequence[str]) -> Dict[str, object]:
+        return self._manage_codes(codes, action="add")
 
     def delete_codes(self, codes: Sequence[str]) -> Dict[str, object]:
-        skill = self._load_skill()
-        if skill is None:
-            return {"success": False, "deleted": [], "failed": list(codes), "message": "skill unavailable", "fail_details": {}}
-
-        deleted: List[str] = []
-        failed: List[str] = []
-        fail_details: Dict[str, object] = {}
-        for code in codes:
-            code = str(code).strip()
-            if not code:
-                continue
-            variants = self._code_variants(code)
-            last_result = None
-            last_error = None
-            ok = False
-            for variant_index, variant in enumerate(variants):
-                try:
-                    if variant_index > 0:
-                        time.sleep(0.3)
-                    result = skill.manage_self_select(self.apikey, f"把{variant}从我的自选股列表删除")
-                    last_result = result
-                    ok = isinstance(result, dict) and (result.get('status') == 0 or result.get('code') == 0)
-                    if ok:
-                        deleted.append(code)
-                        if variant != code:
-                            logger.info("妙想自选删除成功（fallback）: %s -> %s", code, variant)
-                        break
-                except Exception as exc:
-                    last_error = f"{type(exc).__name__}: {exc}"
-            if not ok:
-                failed.append(code)
-                fail_details[code] = {
-                    "variants": variants,
-                    "last_result": last_result,
-                    "last_error": last_error,
-                }
-                logger.warning("妙想自选删除失败: code=%s variants=%s last_error=%s last_result=%s", code, variants, last_error, last_result)
-
-        return {
-            "success": not failed,
-            "deleted": deleted,
-            "failed": failed,
-            "fail_details": fail_details,
-        }
+        return self._manage_codes(codes, action="delete")
