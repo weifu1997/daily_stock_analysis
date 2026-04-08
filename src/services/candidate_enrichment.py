@@ -15,6 +15,7 @@ class CandidateEnrichmentService:
         self.mx_client = mx_client
 
     def enrich_candidates(self, candidates: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """候选池阶段只补轻量信号，不做逐只 mx-data 摘要查询。"""
         enriched: List[Dict[str, Any]] = []
         for item in candidates:
             code = str(item.get("code", "")).strip()
@@ -25,7 +26,11 @@ class CandidateEnrichmentService:
             enriched_item["mx_theme_tags"] = signal.theme_tags if signal else []
             enriched_item["mx_risk_flags"] = signal.risk_flags if signal else []
             enriched_item["mx_events"] = [ev.__dict__ for ev in (signal.events if signal else [])]
-            enriched_item["mx_data_summary"] = self._query_data_summary(code, name)
+            enriched_item["mx_data_summary"] = {
+                "mx_data_enabled": bool(self.mx_client and getattr(self.mx_client, 'enabled', False)),
+                "mx_data_skipped": True,
+                "reason": "candidate_pool_stage_skip",
+            }
             enriched.append(enriched_item)
         return enriched
 
