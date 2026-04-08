@@ -261,14 +261,14 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         '--mx-query',
         type=str,
-        help='妙想预选股自然语言条件，未提供则使用 MX_PRESELECT_QUERY'
+        help='妙想预选股自然语言条件（仅调试用途；方案A下生产主链忽略，统一以 .env / 持久化配置为准）'
     )
 
     parser.add_argument(
         '--mx-profile',
         type=str,
         choices=['trend', 'fundamental', 'basic'],
-        help='妙想预选池一键风格开关：trend / fundamental / basic'
+        help='妙想预选池一键风格开关（仅调试用途；方案A下生产主链忽略，统一以 .env / 持久化配置为准）：trend / fundamental / basic'
     )
 
     parser.add_argument(
@@ -782,10 +782,26 @@ def _resolve_mx_profile_query(profile: Optional[str]) -> Optional[str]:
     return MX_PRESELECT_PROFILES.get(profile.strip().lower())
 
 
-def _resolve_mx_preselect_stock_codes(config: Config, query: Optional[str] = None, profile: Optional[str] = None) -> Optional[List[str]]:
+def _resolve_mx_preselect_settings(config: Config) -> tuple[Optional[str], Optional[str]]:
+    """方案A：生产主链只认 .env / 持久化配置。"""
+    env_query = (getattr(config, 'mx_preselect_query', None) or '').strip()
+    if env_query:
+        return env_query, 'env_query'
+
+    env_profile = (getattr(config, 'mx_preselect_profile', None) or '').strip().lower()
+    if env_profile:
+        profile_query = _resolve_mx_profile_query(env_profile)
+        if profile_query:
+            return profile_query, f'env_profile:{env_profile}'
+
+    return None, None
+
+
+def _resolve_mx_preselect_stock_codes(config: Config) -> Optional[List[str]]:
     """Use the MX smart selection skill to derive stock codes."""
-    preselect_query = (query or getattr(config, 'mx_preselect_query', None) or '').strip()
+    preselect_query, query_source = _resolve_mx_preselect_settings(config)
     if not preselect_query:
+        logger.info('妙想预选池未启用：未在 .env / 持久化配置中配置 MX_PRESELECT_QUERY 或 MX_PRESELECT_PROFILE')
         return None
 
     skill_path = Path('/root/.openclaw/workspace/skills/mx-xuangu')
@@ -845,7 +861,7 @@ def _resolve_mx_preselect_stock_codes(config: Config, query: Optional[str] = Non
                 if cached:
                     name_count += 1
         if codes:
-            logger.info('妙想预选股成功：query=%r, data_source=%s, count=%d, name_cached=%d', preselect_query, data_source, len(codes), name_count)
+            logger.info('妙想预选股成功：source=%s query=%r, data_source=%s, count=%d, name_cached=%d', query_source, preselect_query, data_source, len(codes), name_count)
             if names_by_code:
                 logger.debug('妙想预选名称样本：%s', list(names_by_code.items())[:5])
             return codes
@@ -990,14 +1006,17 @@ def main() -> int:
 
     # 解析股票列表（统一为大写 Issue #355）
     stock_codes = None
-    mx_profile = getattr(args, 'mx_profile', None) or getattr(config, 'mx_preselect_profile', None)
-    mx_profile_query = _resolve_mx_profile_query(mx_profile)
     if args.stocks:
         stock_codes = [canonical_stock_code(c) for c in args.stocks.split(',') if (c or "").strip()]
         logger.info(f"使用命令行指定的股票列表: {stock_codes}")
-    elif mx_profile_query or getattr(args, 'mx_preselect', False) or getattr(config, 'mx_preselect_priority', False):
-        resolved_query = getattr(args, 'mx_query', None) or mx_profile_query
-        stock_codes = _resolve_mx_preselect_stock_codes(config, query=resolved_query, profile=mx_profile)
+    elif getattr(args, 'mx_query', None) or getattr(args, 'mx_profile', None):
+        logger.warning('方案A已启用：生产主链妙想预选只认 .env / 持久化配置，忽略 CLI 的 --mx-query/--mx-profile')
+        stock_codes = _resolve_mx_preselect_stock_codes(config)
+        if stock_codes:
+            logger.info(f"使用妙想预选池股票列表: {stock_codes}")
+            # 妙想预选池已经提供了可追溯的股票名称缓存，后续名称解析应尽量命中缓存。
+    elif getattr(args, 'mx_preselect', False) or getattr(config, 'mx_preselect_priority', False) or getattr(config, 'mx_preselect_query', None) or getattr(config, 'mx_preselect_profile', None):
+        stock_codes = _resolve_mx_preselect_stock_codes(config)
         if stock_codes:
             logger.info(f"使用妙想预选池股票列表: {stock_codes}")
             # 妙想预选池已经提供了可追溯的股票名称缓存，后续名称解析应尽量命中缓存。

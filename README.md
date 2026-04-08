@@ -74,7 +74,7 @@
 
 > **A 股路由**：仍为 Efinance → AkShare → Tushare → Pytdx → Baostock。
 >
-> **妙想预选池**：如果配置 `MX_PRESELECT_PROFILE`，启动时会优先按预置风格生成候选池（`trend` / `fundamental` / `basic`）；也可继续用 `MX_PRESELECT_QUERY` 手动覆盖。若妙想不可用或结果为空，则自动回退到 `STOCK_LIST`。
+> **妙想预选池（方案A）**：生产主链只认 `.env` / 持久化配置中的 `MX_PRESELECT_QUERY` 或 `MX_PRESELECT_PROFILE`。若两者同时存在，优先 `MX_PRESELECT_QUERY`；若妙想不可用或结果为空，则自动回退到 `STOCK_LIST`。CLI 的 `--mx-query` / `--mx-profile` 仅保留为调试参数，生产主链会忽略。
 
 ### 内置交易纪律
 
