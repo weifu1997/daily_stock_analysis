@@ -25,7 +25,7 @@ class TestPipelineCandidatePool(unittest.TestCase):
             mx_preselect_priority=mx_priority,
             mx_preselect_limit=mx_limit,
             mx_preselect_profile=profile,
-            mx_preselect_query="A股 正常交易 低估值 高ROE 业绩稳定 现金流较好 财务健康 排除ST 排除停牌",
+            mx_preselect_query="A股 正常交易 非ST 非停牌 低估值 高ROE 业绩稳定 经营现金流良好 财务健康 排除科创板 排除创业板 排除北交所",
         )
         pipeline.candidate_enrichment_service = MagicMock()
         pipeline.candidate_enrichment_service.enrich_candidates.side_effect = lambda rows: [

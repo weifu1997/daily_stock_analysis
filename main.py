@@ -69,7 +69,7 @@ _RUNTIME_ENV_FILE_KEYS = set()
 # - chip_fallback：筹码兜底链路，顺序为 Tushare -> AkShare -> 网页兜底
 MX_PRESELECT_PROFILES = {
     'trend': 'A股 正常交易 近期突破 量价配合 成交量放大 排除ST 排除停牌',
-    'fundamental': 'A股 正常交易 低估值 高ROE 业绩稳定 现金流较好 财务健康 排除ST 排除停牌',
+    'fundamental': 'A股 正常交易 非ST 非停牌 低估值 高ROE 业绩稳定 经营现金流良好 财务健康 排除科创板 排除创业板 排除北交所',
     'basic': 'A股 正常交易 排除ST 排除停牌 排除异常标的',
 }
 
