@@ -24,7 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import json
 import logging
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -46,6 +46,7 @@ class MoniPlanItem:
     action: str
     reason: str = ""
     target_date: str = ""
+    name: str = ""
 
 
 @dataclass
@@ -66,8 +67,15 @@ def _latest_plan_file() -> Optional[Path]:
 def _load_plan(path: Path) -> List[MoniPlanItem]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     items = []
+    allowed_keys = {f.name for f in fields(MoniPlanItem)}
     for row in payload.get("items", []):
-        items.append(MoniPlanItem(**row))
+        if not isinstance(row, dict):
+            continue
+        filtered = {k: v for k, v in row.items() if k in allowed_keys}
+        # 保底字段，避免上游 plan 结构变化导致执行入口直接炸掉
+        filtered.setdefault("code", "")
+        filtered.setdefault("action", "HOLD")
+        items.append(MoniPlanItem(**filtered))
     return items
 
 
@@ -123,7 +131,11 @@ def execute_latest_plan() -> MoniExecutionResult:
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    result = execute_latest_plan()
+    try:
+        result = execute_latest_plan()
+    except Exception as exc:
+        logger.exception("mx-moni 次日执行失败: %s", exc)
+        return 1
     logger.info("执行完成: %s", result)
     return 0
 
