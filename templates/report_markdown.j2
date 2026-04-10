@@ -100,6 +100,11 @@
 {% if chip_data %}
 **{{ labels.chip_label }}**: {{ chip_data.get('profit_ratio', 'N/A') }} | {{ chip_data.get('avg_cost', 'N/A') }} | {{ chip_data.get('concentration', 'N/A') }} {{ localize_chip_health(chip_data.get('chip_health', 'N/A'), report_language) }}
 {% endif %}
+
+{% set adj_data = data_persp.get('adj_structure', {}) %}
+{% if adj_data %}
+**📐 复权数据**: {{ adj_data.get('adj_source', 'TushareFetcher') }} / {{ adj_data.get('adj_type', 'qfq') }} | 因子 {{ adj_data.get('latest_adj_factor', 'N/A') }} | 最新复权收盘 {{ adj_data.get('latest_adj', {}).get('close', 'N/A') }} | 日期 {{ adj_data.get('latest_adj', {}).get('date', 'N/A') }}
+{% endif %}
 {% endif %}
 
 {% if battle %}
