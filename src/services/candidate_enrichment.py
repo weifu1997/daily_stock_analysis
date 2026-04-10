@@ -105,7 +105,19 @@ class CandidateEnrichmentService:
             score += 1
 
         decision_hint = "reject"
-        if flags and len(flags) >= 2:
+        reject_reasons = []
+        if isinstance(revenue_yoy, (int, float)) and revenue_yoy < 0:
+            reject_reasons.append("revenue_yoy_negative")
+        if isinstance(profit_yoy, (int, float)) and profit_yoy < 0:
+            reject_reasons.append("profit_yoy_negative")
+        if isinstance(n_income_attr_p, (int, float)) and n_income_attr_p < 0:
+            reject_reasons.append("parent_profit_negative")
+        if isinstance(operate_profit, (int, float)) and operate_profit < 0:
+            reject_reasons.append("operate_profit_negative")
+        if isinstance(total_profit, (int, float)) and total_profit < 0:
+            reject_reasons.append("total_profit_negative")
+
+        if reject_reasons:
             decision_hint = "reject"
         elif score >= 6:
             decision_hint = "strong_positive"
@@ -114,11 +126,20 @@ class CandidateEnrichmentService:
         elif score >= 2:
             decision_hint = "neutral"
 
+        threshold_note = {
+            "reject": "负增长或利润转负，直接剔除",
+            "neutral": "可进候选池，但不进 topN 优先位",
+            "positive": "可正常参与排序",
+            "strong_positive": "优先进入 topN",
+        }
+
         return {
             "enabled": True,
             "score": score,
             "decision_hint": decision_hint,
+            "threshold_note": threshold_note.get(decision_hint, ""),
             "flags": flags,
+            "reject_reasons": reject_reasons,
             "snapshot": {
                 "total_revenue": total_revenue,
                 "n_income_attr_p": n_income_attr_p,
@@ -141,22 +162,32 @@ class CandidateEnrichmentService:
         pe = raw.get("pe_ratio") if isinstance(raw, dict) else None
         pb = raw.get("pb_ratio") if isinstance(raw, dict) else None
         pe_ttm = raw.get("pe_ttm") if isinstance(raw, dict) else None
+        valuation_flags = []
         score = 0
         if isinstance(pe, (int, float)) and 0 < pe <= 30:
             score += 1
+        elif isinstance(pe, (int, float)) and pe > 60:
+            valuation_flags.append("pe_too_high")
         if isinstance(pe_ttm, (int, float)) and 0 < pe_ttm <= 30:
             score += 1
+        elif isinstance(pe_ttm, (int, float)) and pe_ttm > 60:
+            valuation_flags.append("pe_ttm_too_high")
         if isinstance(pb, (int, float)) and 0 < pb <= 5:
             score += 1
+        elif isinstance(pb, (int, float)) and pb > 10:
+            valuation_flags.append("pb_too_high")
         decision_hint = "reject"
-        if score >= 3:
+        if score >= 3 and not valuation_flags:
             decision_hint = "positive"
-        elif score >= 2:
+        elif score >= 2 and not valuation_flags:
+            decision_hint = "neutral"
+        elif score >= 1:
             decision_hint = "neutral"
         return {
             "enabled": True,
             "score": score,
             "decision_hint": decision_hint,
+            "flags": valuation_flags,
             "snapshot": {
                 "pe_ratio": pe,
                 "pe_ttm": pe_ttm,

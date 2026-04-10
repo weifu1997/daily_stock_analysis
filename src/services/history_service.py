@@ -262,6 +262,7 @@ class HistoryService:
 
         adj_structure = None
         financial_summary = None
+        financial_filter_summary = None
         if isinstance(raw_result, dict):
             adj_structure = raw_result.get("dashboard", {}).get("data_perspective", {}).get("adj_structure", {})
             if not isinstance(adj_structure, dict) or not adj_structure:
@@ -298,6 +299,10 @@ class HistoryService:
                     "roe": financial_summary.get("roe"),
                 }
 
+            financial_filter_summary = raw_result.get("mx_enrichment", {}).get("financial_filter_summary", {}) if isinstance(raw_result.get("mx_enrichment", {}), dict) else None
+            if not isinstance(financial_filter_summary, dict) or not financial_filter_summary:
+                financial_filter_summary = None
+
         return {
             "id": record.id,
             "query_id": record.query_id,
@@ -319,6 +324,7 @@ class HistoryService:
             "raw_result": raw_result,
             "adj_structure": adj_structure,
             "financial_summary": financial_summary,
+            "financial_filter_summary": financial_filter_summary,
             "context_snapshot": context_snapshot,
         }
 

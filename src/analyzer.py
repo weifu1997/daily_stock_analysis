@@ -1720,6 +1720,22 @@ class GeminiAnalyzer:
 > 若上述字段为 N/A 或缺失，请明确写“数据缺失，无法判断”，禁止编造。
 """
 
+        financial_filter_summary = context.get("financial_filter_summary") if isinstance(context, dict) else None
+        if isinstance(financial_filter_summary, dict) and financial_filter_summary.get("enabled"):
+            prompt += f"""
+### 财务筛选摘要（候选池前置门槛）
+| 项目 | 值 | 说明 |
+|------|------|------|
+| 财务评分 | {financial_filter_summary.get('score', 'N/A')} | 越高越好 |
+| 决策提示 | {financial_filter_summary.get('decision_hint', 'N/A')} | reject/neutral/positive/strong_positive |
+| 阈值说明 | {financial_filter_summary.get('threshold_note', 'N/A')} | |
+| 负面标记 | {', '.join(financial_filter_summary.get('flags', [])) or '无'} | |
+| 估值评分 | {financial_filter_summary.get('valuation_summary', {}).get('score', 'N/A')} | PE/PB/PE_TTM 联动 |
+| 估值提示 | {financial_filter_summary.get('valuation_summary', {}).get('decision_hint', 'N/A')} | |
+
+> 若财务评分为 reject，请明确写出“负增长/利润转负，已被候选池前置剔除或降权”。
+"""
+
         # 添加筹码分布数据
         if 'chip' in context:
             chip = context['chip']
