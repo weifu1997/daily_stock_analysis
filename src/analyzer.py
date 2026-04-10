@@ -2032,8 +2032,8 @@ class GeminiAnalyzer:
                     lines.append("- dashboard.core_conclusion.one_sentence: one-line decision")
                 elif f == "dashboard.intelligence.risk_alerts":
                     lines.append("- dashboard.intelligence.risk_alerts: risk alert list (can be empty)")
-                elif f == "dashboard.battle_plan.sniper_points.stop_loss":
-                    lines.append("- dashboard.battle_plan.sniper_points.stop_loss: stop-loss level")
+                elif f == "dashboard.data_perspective.adj_structure":
+                    lines.append("- dashboard.data_perspective.adj_structure: adjusted price snapshot including source, type, latest factor, and latest close")
             return "\n".join(lines)
 
         lines = ["### 补全要求：请在上方分析基础上补充以下必填内容，并输出完整 JSON："]
@@ -2050,6 +2050,8 @@ class GeminiAnalyzer:
                 lines.append("- dashboard.intelligence.risk_alerts: 风险警报列表（可为空数组）")
             elif f == "dashboard.battle_plan.sniper_points.stop_loss":
                 lines.append("- dashboard.battle_plan.sniper_points.stop_loss: 止损价")
+            elif f == "dashboard.data_perspective.adj_structure":
+                lines.append("- dashboard.data_perspective.adj_structure: 复权快照（来源、类型、最新复权因子、最新复权收盘）")
         return "\n".join(lines)
 
     def _build_integrity_retry_prompt(
