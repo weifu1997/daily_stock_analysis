@@ -1425,13 +1425,30 @@ class StockAnalysisPipeline:
                 query_text = (getattr(self.config, "mx_preselect_query", None) or "").strip()
                 mx_input_rows = [{"code": code, "name": ""} for code in normalized_original]
                 enriched_rows = self.candidate_enrichment_service.enrich_candidates(mx_input_rows)
-                scored_rows = sorted(
-                    enriched_rows,
-                    key=lambda row: float(row.get("mx_event_score") or 0.0),
-                    reverse=True,
-                )
 
-                for row in scored_rows:
+                hint_rank = {"reject": 0, "neutral": 1, "positive": 2, "strong_positive": 3}
+                ranked_rows = []
+                for row in enriched_rows:
+                    fin = row.get("financial_filter_summary") if isinstance(row, dict) else {}
+                    hint = str(fin.get("decision_hint") or "neutral").strip().lower() if isinstance(fin, dict) else "neutral"
+                    score = float(row.get("mx_event_score") or 0.0)
+                    fin_score = float(fin.get("score") or 0.0) if isinstance(fin, dict) else 0.0
+                    valuation = fin.get("valuation_summary") if isinstance(fin, dict) else {}
+                    val_score = 0.0
+                    if isinstance(valuation, dict):
+                        val_score = float(valuation.get("score") or 0.0)
+                    combined = score + fin_score * 5.0 + val_score * 2.0
+                    if hint == "reject":
+                        combined -= 100.0
+                    ranked_rows.append((hint_rank.get(hint, 1), combined, row))
+
+                ranked_rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
+                for hint_level, combined_score, row in ranked_rows:
+                    fin = row.get("financial_filter_summary") if isinstance(row, dict) else {}
+                    hint = str(fin.get("decision_hint") or "neutral").strip().lower() if isinstance(fin, dict) else "neutral"
+                    if hint == "reject":
+                        continue
                     code = normalize_stock_code(row.get("code"))
                     if code and code not in mx_xuangu_pool:
                         mx_xuangu_pool.append(code)

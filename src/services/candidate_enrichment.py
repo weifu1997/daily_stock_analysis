@@ -46,7 +46,10 @@ class CandidateEnrichmentService:
                 "financial_filter_summary": {"enabled": False},
             }
         mx_data_summary = self._query_data_summary(code, name)
-        financial_filter_summary = self._build_financial_filters(mx_data_summary.get("financial_summary") if isinstance(mx_data_summary, dict) else None)
+        financial_summary = mx_data_summary.get("financial_summary") if isinstance(mx_data_summary, dict) else None
+        financial_filter_summary = self._build_financial_filters(financial_summary)
+        valuation_summary = self._build_valuation_summary(mx_data_summary if isinstance(mx_data_summary, dict) else {})
+        financial_filter_summary["valuation_summary"] = valuation_summary
         return {
             "mx_enabled": True,
             "mx_event_score": signal.event_score,
@@ -86,19 +89,35 @@ class CandidateEnrichmentService:
             flags.append("total_profit_negative")
 
         score = 0
-        for val, threshold in ((revenue_yoy, 0), (profit_yoy, 0), (roe, 10)):
-            if isinstance(val, (int, float)) and val > threshold:
-                score += 1
+        if isinstance(revenue_yoy, (int, float)) and revenue_yoy > 0:
+            score += 1
+        if isinstance(profit_yoy, (int, float)) and profit_yoy > 0:
+            score += 1
+        if isinstance(roe, (int, float)) and roe >= 10:
+            score += 1
         if isinstance(n_income_attr_p, (int, float)) and n_income_attr_p > 0:
+            score += 1
+        if isinstance(operate_profit, (int, float)) and operate_profit > 0:
             score += 1
         if isinstance(basic_eps, (int, float)) and basic_eps > 0:
             score += 1
         if isinstance(rd_exp, (int, float)) and rd_exp > 0:
             score += 1
 
+        decision_hint = "reject"
+        if flags and len(flags) >= 2:
+            decision_hint = "reject"
+        elif score >= 6:
+            decision_hint = "strong_positive"
+        elif score >= 4:
+            decision_hint = "positive"
+        elif score >= 2:
+            decision_hint = "neutral"
+
         return {
             "enabled": True,
             "score": score,
+            "decision_hint": decision_hint,
             "flags": flags,
             "snapshot": {
                 "total_revenue": total_revenue,
@@ -111,5 +130,36 @@ class CandidateEnrichmentService:
                 "revenue_yoy": revenue_yoy,
                 "profit_yoy": profit_yoy,
                 "roe": roe,
+            },
+        }
+
+    def _build_valuation_summary(self, mx_data_summary: Dict[str, Any]) -> Dict[str, Any]:
+        """Build a lightweight valuation summary from mx-data when available."""
+        if not isinstance(mx_data_summary, dict):
+            return {"enabled": False}
+        raw = mx_data_summary.get("raw") if isinstance(mx_data_summary.get("raw"), dict) else {}
+        pe = raw.get("pe_ratio") if isinstance(raw, dict) else None
+        pb = raw.get("pb_ratio") if isinstance(raw, dict) else None
+        pe_ttm = raw.get("pe_ttm") if isinstance(raw, dict) else None
+        score = 0
+        if isinstance(pe, (int, float)) and 0 < pe <= 30:
+            score += 1
+        if isinstance(pe_ttm, (int, float)) and 0 < pe_ttm <= 30:
+            score += 1
+        if isinstance(pb, (int, float)) and 0 < pb <= 5:
+            score += 1
+        decision_hint = "reject"
+        if score >= 3:
+            decision_hint = "positive"
+        elif score >= 2:
+            decision_hint = "neutral"
+        return {
+            "enabled": True,
+            "score": score,
+            "decision_hint": decision_hint,
+            "snapshot": {
+                "pe_ratio": pe,
+                "pe_ttm": pe_ttm,
+                "pb_ratio": pb,
             },
         }
