@@ -8,7 +8,7 @@ WebUI 启动脚本
 直接运行 `python webui.py` 将启动 Web 后端服务。
 
 等效命令：
-    python main.py --webui-only
+    scripts/run_daily_stock_analysis.sh --webui-only
 
 Usage:
   python webui.py

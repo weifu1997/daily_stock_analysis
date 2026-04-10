@@ -959,6 +959,20 @@ def _build_schedule_time_provider(default_schedule_time: str):
     return _provider
 
 
+def _enforce_script_entry() -> None:
+    """Enforce script/tmux entry for the formal project.
+
+    Direct interactive launches are blocked unless the approved launcher
+    explicitly sets DAILY_STOCK_ANALYSIS_ENTRY=script.
+    """
+    if os.getenv("DAILY_STOCK_ANALYSIS_ENTRY") == "script":
+        return
+    raise SystemExit(
+        "请使用 scripts/run_daily_stock_analysis.sh（或其 tmux 包装脚本）启动正式项目，"
+        "不要直接运行 main.py。"
+    )
+
+
 def main() -> int:
     """
     主入口函数
@@ -966,6 +980,7 @@ def main() -> int:
     Returns:
         退出码（0 表示成功）
     """
+    _enforce_script_entry()
     # 解析命令行参数
     args = parse_arguments()
 

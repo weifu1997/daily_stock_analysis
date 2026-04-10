@@ -2840,8 +2840,13 @@ class SearchService:
             fallback_response: Optional[SearchResponse] = None
             best_preferred_response: Optional[SearchResponse] = None
             best_preferred_count = 0
-            for provider in self._providers:
-                if not provider.is_available:
+            primary_fallback_priority = ["searxng", "tavily"]
+            secondary_fallback_priority = ["brave", "serpapi", "bocha", "minimax"]
+            provider_map = {p.name.lower(): p for p in self._providers if p.is_available}
+            fallback_chain = primary_fallback_priority + secondary_fallback_priority
+            for provider_name in fallback_chain:
+                provider = provider_map.get(provider_name)
+                if not provider:
                     continue
 
                 search_kwargs: Dict[str, Any] = {}
@@ -2991,16 +2996,26 @@ class SearchService:
         if mx_response.success and mx_response.results and not self.mx_search_fallback_enabled:
             return mx_response
         
-        # 依次尝试各个搜索引擎
-        for provider in self._providers:
-            if not provider.is_available:
+        primary_fallback_priority = ["searxng", "tavily"]
+        secondary_fallback_priority = ["brave", "serpapi", "bocha", "minimax"]
+        provider_map = {p.name.lower(): p for p in self._providers if p.is_available}
+
+        fallback_response = None
+        fallback_chain = primary_fallback_priority + secondary_fallback_priority
+        for provider_name in fallback_chain:
+            provider = provider_map.get(provider_name)
+            if not provider:
                 continue
-            
+
+            logger.info(f"[事件搜索] 使用 {provider.name}")
             response = provider.search(query, max_results=5)
-            
-            if response.success:
+            fallback_response = response
+            if response.success and response.results:
                 return response
-        
+
+        if fallback_response is not None:
+            return fallback_response
+
         return SearchResponse(
             query=query,
             results=[],
@@ -3160,8 +3175,9 @@ class SearchService:
             provider_max_results,
         )
         
-        # 轮流使用不同的搜索引擎
-        provider_index = 0
+        primary_fallback_priority = ["searxng", "tavily"]
+        secondary_fallback_priority = ["brave", "serpapi", "bocha", "minimax"]
+        provider_map = {p.name.lower(): p for p in self._providers if p.is_available}
         
         for dim in search_dimensions:
             if search_count >= max_searches:
@@ -3213,35 +3229,40 @@ class SearchService:
                 )
                 continue
 
-            # 选择搜索引擎（轮流使用）
-            available_providers = [p for p in self._providers if p.is_available]
-            if not available_providers:
-                break
-            
-            provider = available_providers[provider_index % len(available_providers)]
-            provider_index += 1
-            
-            logger.info(f"[情报搜索] {dim['desc']}: 使用 {provider.name}")
+            fallback_response = None
+            fallback_chain = primary_fallback_priority + secondary_fallback_priority
+            for provider_name in fallback_chain:
+                provider = provider_map.get(provider_name)
+                if not provider:
+                    continue
+                logger.info(f"[情报搜索] {dim['desc']}: 使用 {provider.name}")
+                if isinstance(provider, TavilySearchProvider) and dim.get('tavily_topic'):
+                    response = provider.search(
+                        dim['query'],
+                        max_results=provider_max_results,
+                        days=search_days,
+                        topic=dim['tavily_topic'],
+                    )
+                else:
+                    response = provider.search(
+                        dim['query'],
+                        max_results=provider_max_results,
+                        days=search_days,
+                    )
+                fallback_response = response
+                if response.success and response.results:
+                    break
 
-            if isinstance(provider, TavilySearchProvider) and dim.get('tavily_topic'):
-                response = provider.search(
-                    dim['query'],
-                    max_results=provider_max_results,
-                    days=search_days,
-                    topic=dim['tavily_topic'],
-                )
-            else:
-                response = provider.search(
-                    dim['query'],
-                    max_results=provider_max_results,
-                    days=search_days,
-                )
+            if fallback_response is None:
+                break
+
+            response = fallback_response
             if dim['strict_freshness']:
                 filtered_response = self._filter_news_response(
                     response,
                     search_days=search_days,
                     max_results=target_per_dimension,
-                    log_scope=f"{stock_code}:{provider.name}:{dim['name']}",
+                    log_scope=f"{stock_code}:{response.provider}:{dim['name']}",
                 )
             else:
                 filtered_response = self._normalize_and_limit_response(
@@ -3391,14 +3412,19 @@ class SearchService:
         # 使用多个关键词模板搜索
         is_foreign = self._is_foreign_stock(stock_code)
         keywords = self.ENHANCED_SEARCH_KEYWORDS_EN if is_foreign else self.ENHANCED_SEARCH_KEYWORDS
+        primary_fallback_priority = ["searxng", "tavily"]
+        secondary_fallback_priority = ["brave", "serpapi", "bocha", "minimax"]
+        provider_map = {p.name.lower(): p for p in self._providers if p.is_available}
+        fallback_chain = primary_fallback_priority + secondary_fallback_priority
         for i, keyword_template in enumerate(keywords[:max_attempts]):
             query = keyword_template.format(name=stock_name, code=stock_code)
             
             logger.info(f"[增强搜索] 第 {i+1}/{max_attempts} 次搜索: {query}")
             
             # 依次尝试各个搜索引擎
-            for provider in self._providers:
-                if not provider.is_available:
+            for provider_name in fallback_chain:
+                provider = provider_map.get(provider_name)
+                if not provider:
                     continue
                 
                 try:

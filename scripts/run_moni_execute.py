@@ -59,6 +59,50 @@ class MoniExecutionResult:
     executed_items: List[dict]
 
 
+@dataclass
+class TradeSizing:
+    total_assets: float
+    budget_per_trade: float
+    price: float
+    quantity: int
+
+
+def _extract_total_assets(account_info: object) -> float:
+    if not isinstance(account_info, dict):
+        return 0.0
+    data = account_info.get('data', {})
+    if not isinstance(data, dict):
+        return 0.0
+    for key in ('totalAssets', 'total_assets', 'total_asset', 'balanceActual', 'availBalance'):
+        value = data.get(key)
+        if isinstance(value, (int, float)) and value > 0:
+            return float(value)
+    return 0.0
+
+
+def _extract_price_from_plan_item(item: MoniPlanItem) -> float:
+    current_price = getattr(item, 'current_price', None)
+    if isinstance(current_price, (int, float)) and current_price > 0:
+        return float(current_price)
+    reason = item.reason or ''
+    for token in reason.replace('（', '(').replace('）', ')').split():
+        if '元' in token:
+            try:
+                return float(token.replace('元', '').replace(',', ''))
+            except ValueError:
+                continue
+    return 0.0
+
+
+def _calc_buy_quantity(total_assets: float, price: float) -> TradeSizing:
+    budget = total_assets / 8.0
+    if price <= 0:
+        return TradeSizing(total_assets=total_assets, budget_per_trade=budget, price=price, quantity=0)
+    raw_qty = int(budget / price)
+    quantity = (raw_qty // 100) * 100
+    return TradeSizing(total_assets=total_assets, budget_per_trade=budget, price=price, quantity=quantity)
+
+
 def _latest_plan_file() -> Optional[Path]:
     files = sorted(PLAN_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     return files[0] if files else None
@@ -104,15 +148,48 @@ def execute_latest_plan() -> MoniExecutionResult:
     account_info = client.query_account()
     position_info = client.query_positions()
     order_info = client.query_orders()
+    total_assets = _extract_total_assets(account_info)
 
     executed = []
     for item in plan_items:
-        executed.append({
+        executed_item = {
             "code": item.code,
             "action": item.action,
             "reason": item.reason,
             "status": "recorded",
-        })
+        }
+
+        try:
+            if item.action == "BUY":
+                if not item.code:
+                    raise ValueError("BUY 计划缺少股票代码")
+                price = _extract_price_from_plan_item(item)
+                sizing = _calc_buy_quantity(total_assets, price)
+                executed_item["sizing"] = asdict(sizing)
+                if sizing.quantity < 100:
+                    executed_item["status"] = "skipped"
+                    executed_item["skip_reason"] = "按 1/8 仓位计算后不足 100 股"
+                else:
+                    executed_item["trade_result"] = client.buy(
+                        item.code,
+                        price=0.0,
+                        quantity=sizing.quantity,
+                        use_market_price=True,
+                    )
+                    executed_item["status"] = "submitted"
+            elif item.action == "SELL":
+                if not item.code:
+                    raise ValueError("SELL 计划缺少股票代码")
+                executed_item["trade_result"] = client.sell(item.code, price=0.0, quantity=100, use_market_price=True)
+                executed_item["status"] = "submitted"
+            else:
+                executed_item["status"] = "skipped"
+        except Exception as exc:
+            executed_item["status"] = "failed"
+            executed_item["error"] = str(exc)
+            logger.warning("mx-moni 执行失败: code=%s action=%s error=%s", item.code, item.action, exc)
+
+        executed.append(executed_item)
 
     result = MoniExecutionResult(
         plan_file=str(plan_file),

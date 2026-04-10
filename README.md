@@ -253,7 +253,7 @@ pip install -r requirements.txt
 cp .env.example .env && vim .env
 
 # 运行分析
-python main.py
+scripts/run_daily_stock_analysis.sh
 ```
 
 如果你不用 Web，推荐直接在 `.env` 里按条写模型渠道：
@@ -407,8 +407,8 @@ LITELLM_MODEL=openai/deepseek-chat
 
 1. **启动服务**（默认会自动编译前端）
    ```bash
-   python main.py --webui       # 启动 Web 界面 + 执行定时分析
-   python main.py --webui-only  # 仅启动 Web 界面
+   scripts/run_daily_stock_analysis.sh --webui       # 启动 Web 界面 + 执行定时分析
+   scripts/run_daily_stock_analysis.sh --webui-only  # 仅启动 Web 界面
    ```
    启动时会在 `apps/dsa-web` 自动执行 `npm install && npm run build`。
    如需关闭自动构建，设置 `WEBUI_AUTO_BUILD=false`，并改为手动执行：
@@ -422,7 +422,7 @@ LITELLM_MODEL=openai/deepseek-chat
 
 > 在云服务器上部署后，不知道浏览器该输入什么地址？请看 [云服务器 Web 界面访问指南](docs/deploy-webui-cloud.md)。
 
-> 也可以使用 `python main.py --serve` (等效命令)
+> 也可以使用 `scripts/run_daily_stock_analysis.sh --serve` (等效命令)
 
 ## 🗺️ Roadmap
 

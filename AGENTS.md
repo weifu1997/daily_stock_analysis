@@ -67,14 +67,14 @@ python scripts/check_ai_assets.py
 ### 运行应用
 
 ```bash
-python main.py
-python main.py --debug
-python main.py --dry-run
-python main.py --stocks 600519,hk00700,AAPL
-python main.py --market-review
-python main.py --schedule
-python main.py --serve
-python main.py --serve-only
+scripts/run_daily_stock_analysis.sh
+scripts/run_daily_stock_analysis.sh --debug
+scripts/run_daily_stock_analysis.sh --dry-run
+scripts/run_daily_stock_analysis.sh --stocks 600519,hk00700,AAPL
+scripts/run_daily_stock_analysis.sh --market-review
+scripts/run_daily_stock_analysis.sh --schedule
+scripts/run_daily_stock_analysis.sh --serve
+scripts/run_daily_stock_analysis.sh --serve-only
 uvicorn server:app --reload --host 0.0.0.0 --port 8000
 ```
 

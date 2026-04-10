@@ -20,9 +20,10 @@ if command -v tmux >/dev/null 2>&1; then
     echo "$(date '+%F %T') tmux session already exists: daily_stock_analysis" >> "$LOG_FILE"
     exit 0
   fi
-  tmux new-session -d -s daily_stock_analysis "bash -lc 'cd \"$WORKDIR\" && exec \"$PYTHON_BIN\" main.py >> \"$LOG_FILE\" 2>&1'"
+  tmux new-session -d -s daily_stock_analysis "bash -lc 'cd \"$WORKDIR\" && export DAILY_STOCK_ANALYSIS_ENTRY=script && exec \"$PYTHON_BIN\" main.py >> \"$LOG_FILE\" 2>&1'"
   echo "$(date '+%F %T') started tmux session: daily_stock_analysis" >> "$LOG_FILE"
   exit 0
 fi
 
+export DAILY_STOCK_ANALYSIS_ENTRY=script
 exec "$PYTHON_BIN" main.py >> "$LOG_FILE" 2>&1

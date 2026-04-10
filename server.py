@@ -13,9 +13,9 @@ Daily Stock Analysis - FastAPI 后端服务入口
 启动方式：
     uvicorn server:app --reload --host 0.0.0.0 --port 8000
     
-    或使用 main.py:
-    python main.py --serve-only      # 仅启动 API 服务
-    python main.py --serve           # API 服务 + 执行分析
+    或使用统一脚本入口：
+    scripts/run_daily_stock_analysis.sh --serve-only      # 仅启动 API 服务
+    scripts/run_daily_stock_analysis.sh --serve           # API 服务 + 执行分析
 """
 
 import logging

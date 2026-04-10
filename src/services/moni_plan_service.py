@@ -32,6 +32,7 @@ class MoniPlanItem:
     sentiment_score: int
     trend_prediction: str
     operation_advice: str
+    current_price: Optional[float] = None
 
 
 def _next_cn_trading_date(from_time: Optional[datetime] = None) -> str:
@@ -63,6 +64,7 @@ def build_items(results: List[AnalysisResult], target_date: Optional[str] = None
             sentiment_score=int(getattr(r, 'sentiment_score', 50) or 50),
             trend_prediction=str(getattr(r, 'trend_prediction', '震荡')),
             operation_advice=str(advice),
+            current_price=(float(getattr(r, 'current_price', 0.0) or 0.0) if getattr(r, 'current_price', None) is not None else None),
         ))
     return items
 
