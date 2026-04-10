@@ -260,12 +260,22 @@ class HistoryService:
         model_used = normalize_model_used(model_used)
         sniper_points = self._get_display_sniper_points(record, raw_result)
 
-        context_snapshot = None
-        if record.context_snapshot:
-            try:
-                context_snapshot = json.loads(record.context_snapshot)
-            except json.JSONDecodeError:
-                context_snapshot = record.context_snapshot
+        adj_structure = None
+        if isinstance(raw_result, dict):
+            adj_structure = raw_result.get("dashboard", {}).get("data_perspective", {}).get("adj_structure", {})
+            if not isinstance(adj_structure, dict) or not adj_structure:
+                adj_structure = None
+            else:
+                latest_adj = adj_structure.get("latest_adj", {}) if isinstance(adj_structure.get("latest_adj", {}), dict) else {}
+                adj_structure = {
+                    "adj_source": adj_structure.get("adj_source", "TushareFetcher"),
+                    "adj_type": adj_structure.get("adj_type", "qfq"),
+                    "latest_adj_factor": adj_structure.get("latest_adj_factor"),
+                    "latest_adj": {
+                        "date": latest_adj.get("date"),
+                        "close": latest_adj.get("close"),
+                    },
+                }
 
         return {
             "id": record.id,
@@ -286,6 +296,7 @@ class HistoryService:
             "take_profit": sniper_points.get("take_profit"),
             "news_content": record.news_content,
             "raw_result": raw_result,
+            "adj_structure": adj_structure,
             "context_snapshot": context_snapshot,
         }
 
@@ -513,8 +524,19 @@ class HistoryService:
         """
         try:
             from src.analyzer import AnalysisResult
-            # Extract dashboard data if available
-            dashboard = raw_result.get("dashboard", {})
+            adj_structure = dashboard.get("data_perspective", {}).get("adj_structure", {}) if dashboard else {}
+            if isinstance(adj_structure, dict) and adj_structure:
+                latest_adj = adj_structure.get("latest_adj", {}) if isinstance(adj_structure.get("latest_adj", {}), dict) else {}
+                adj_structure = {
+                    "adj_source": adj_structure.get("adj_source", "TushareFetcher"),
+                    "adj_type": adj_structure.get("adj_type", "qfq"),
+                    "latest_adj_factor": adj_structure.get("latest_adj_factor"),
+                    "latest_adj": {
+                        "date": latest_adj.get("date"),
+                        "close": latest_adj.get("close"),
+                    },
+                }
+                dashboard.setdefault("data_perspective", {})["adj_structure"] = adj_structure
 
             # Build AnalysisResult with available data
             return AnalysisResult(
