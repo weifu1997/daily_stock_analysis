@@ -508,7 +508,7 @@ class StockAnalysisPipeline:
                 except Exception as e:
                     logger.warning(f"{stock_name}({code}) Social sentiment fetch failed: {e}")
 
-            # Step 5: 获取分析上下文（技术面数据）
+            # Step 5: 获取分析上下文（技术面数据 + 复权数据）
             self._emit_progress(58, f"{stock_name}：正在整理分析上下文")
             context = self.db.get_analysis_context(code)
 
@@ -526,7 +526,7 @@ class StockAnalysisPipeline:
                     'yesterday': {}
                 }
             
-            # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、股票名称）
+            # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、股票名称、复权快照）
             enhanced_context = self._enhance_context(
                 context, 
                 realtime_quote, 
@@ -689,20 +689,16 @@ class StockAnalysisPipeline:
                     e,
                 )
         
-        # 添加趋势分析结果
-        if trend_result:
-            enhanced['trend_analysis'] = {
-                'trend_status': trend_result.trend_status.value,
-                'ma_alignment': trend_result.ma_alignment,
-                'trend_strength': trend_result.trend_strength,
-                'bias_ma5': trend_result.bias_ma5,
-                'bias_ma10': trend_result.bias_ma10,
-                'volume_status': trend_result.volume_status.value,
-                'volume_trend': trend_result.volume_trend,
-                'buy_signal': trend_result.buy_signal.value,
-                'signal_score': trend_result.signal_score,
-                'signal_reasons': trend_result.signal_reasons,
-                'risk_factors': trend_result.risk_factors,
+        # 添加复权数据（最近复权日线 / 复权因子快照）
+        adj_snapshot = context.get('adj_snapshot') or {}
+        if adj_snapshot:
+            enhanced.setdefault('data_perspective', {})
+            enhanced['data_perspective']['adj_structure'] = {
+                'latest_adj': adj_snapshot.get('latest_adj', {}),
+                'latest_adj_factor': adj_snapshot.get('latest_adj_factor'),
+                'rows': adj_snapshot.get('rows', 0),
+                'adj_source': adj_snapshot.get('adj_source', 'TushareFetcher'),
+                'adj_type': adj_snapshot.get('adj_type', 'qfq'),
             }
 
         mx_summary = None

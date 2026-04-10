@@ -1404,6 +1404,19 @@ class NotificationService(
         ]
 
         self._append_market_snapshot(lines, result)
+
+        adj_structure = dashboard.get('data_perspective', {}).get('adj_structure', {}) if dashboard else {}
+        if adj_structure:
+            latest_adj = adj_structure.get('latest_adj', {})
+            lines.extend([
+                "### 📐 复权数据",
+                "",
+                f"- 来源: {adj_structure.get('adj_source', 'TushareFetcher')} / {adj_structure.get('adj_type', 'qfq')}",
+                f"- 复权因子: {adj_structure.get('latest_adj_factor', 'N/A')}",
+                f"- 最新复权收盘: {latest_adj.get('close', 'N/A')}",
+                f"- 最新复权日期: {latest_adj.get('date', 'N/A')}",
+                "",
+            ])
         
         # 核心决策（一句话）
         one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary

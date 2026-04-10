@@ -65,6 +65,77 @@ if TYPE_CHECKING:
 
 # === 数据模型定义 ===
 
+class StockDaily(Base):
+    """
+    股票日线数据模型
+    
+    存储每日行情数据和计算的技术指标
+    支持多股票、多日期的唯一约束
+    """
+    __tablename__ = 'stock_daily'
+    
+    # 主键
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # 股票代码（如 600519, 000001）
+    code = Column(String(10), nullable=False, index=True)
+    
+    # 交易日期
+    date = Column(Date, nullable=False, index=True)
+    
+    # OHLC 数据
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    
+    # 成交数据
+    volume = Column(Float)  # 成交量（股）
+    amount = Column(Float)  # 成交额（元）
+    pct_chg = Column(Float)  # 涨跌幅（%）
+    
+    # 技术指标
+    ma5 = Column(Float)
+    ma10 = Column(Float)
+    ma20 = Column(Float)
+    volume_ratio = Column(Float)  # 量比
+    
+    # 数据来源
+    data_source = Column(String(50))  # 记录数据来源（如 AkshareFetcher）
+    
+    # 更新时间
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # 唯一约束：同一股票同一日期只能有一条数据
+    __table_args__ = (
+        UniqueConstraint('code', 'date', name='uix_code_date'),
+        Index('ix_code_date', 'code', 'date'),
+    )
+    
+    def __repr__(self):
+        return f"<StockDaily(code={self.code}, date={self.date}, close={self.close})>"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            'code': self.code,
+            'date': self.date,
+            'open': self.open,
+            'high': self.high,
+            'low': self.low,
+            'close': self.close,
+            'volume': self.volume,
+            'amount': self.amount,
+            'pct_chg': self.pct_chg,
+            'ma5': self.ma5,
+            'ma10': self.ma10,
+            'ma20': self.ma20,
+            'volume_ratio': self.volume_ratio,
+            'data_source': self.data_source,
+        }
+
+
 class AdjFactor(Base):
     """A股复权因子表。"""
     __tablename__ = 'adj_factor'
@@ -107,7 +178,6 @@ class StockDailyAdj(Base):
         UniqueConstraint('code', 'date', 'adj', name='uix_daily_adj_code_date_adj'),
         Index('ix_daily_adj_code_date', 'code', 'date'),
     )
-
 
 
 class NewsIntel(Base):
@@ -784,7 +854,16 @@ class DatabaseManager:
     @staticmethod
     def _normalize_daily_date(value: Any) -> Any:
         if isinstance(value, str):
-            return datetime.strptime(value, '%Y-%m-%d').date()
+            text = value.strip()
+            for fmt in ('%Y-%m-%d', '%Y%m%d', '%Y/%m/%d'):
+                try:
+                    return datetime.strptime(text, fmt).date()
+                except ValueError:
+                    continue
+            parsed = pd.to_datetime(text, errors='coerce')
+            if pd.notna(parsed):
+                return parsed.date()
+            return value
         if isinstance(value, pd.Timestamp):
             return value.date()
         if isinstance(value, datetime):
@@ -1669,6 +1748,42 @@ class DatabaseManager:
             logger.error(f"保存 {code} 数据失败: {e}")
             raise
 
+    def get_latest_adj_data(
+        self,
+        code: str,
+        days: int = 2,
+        adj: str = 'qfq'
+    ) -> List[StockDailyAdj]:
+        """获取最近 N 天复权日线数据。"""
+        with self.get_session() as session:
+            results = session.execute(
+                select(StockDailyAdj)
+                .where(
+                    and_(
+                        StockDailyAdj.code == code,
+                        StockDailyAdj.adj == adj,
+                    )
+                )
+                .order_by(desc(StockDailyAdj.date))
+                .limit(days)
+            ).scalars().all()
+            return list(results)
+
+    def get_latest_adj_factor(
+        self,
+        code: str,
+        days: int = 2,
+    ) -> List[AdjFactor]:
+        """获取最近 N 天复权因子。"""
+        with self.get_session() as session:
+            results = session.execute(
+                select(AdjFactor)
+                .where(AdjFactor.code == code)
+                .order_by(desc(AdjFactor.date))
+                .limit(days)
+            ).scalars().all()
+            return list(results)
+
     def get_analysis_context(
         self, 
         code: str,
@@ -1695,6 +1810,8 @@ class DatabaseManager:
         
         # 获取最近2天数据
         recent_data = self.get_latest_data(code, days=2)
+        recent_adj_data = self.get_latest_adj_data(code, days=2)
+        recent_adj_factor = self.get_latest_adj_factor(code, days=2)
         
         if not recent_data:
             logger.warning(f"未找到 {code} 的数据")
@@ -1725,6 +1842,20 @@ class DatabaseManager:
             
             # 均线形态判断
             context['ma_status'] = self._analyze_ma_status(today_data)
+
+        if recent_adj_data:
+            adj_today = recent_adj_data[0]
+            adj_yesterday = recent_adj_data[1] if len(recent_adj_data) > 1 else None
+            context['adj_today'] = adj_today.to_dict()
+            if adj_yesterday:
+                context['adj_yesterday'] = adj_yesterday.to_dict()
+            context['adj_snapshot'] = {
+                'latest_adj': adj_today.to_dict(),
+                'rows': len(recent_adj_data),
+                'latest_adj_factor': recent_adj_factor[0].adj_factor if recent_adj_factor else None,
+                'adj_source': adj_today.data_source,
+                'adj_type': adj_today.adj,
+            }
         
         return context
     
