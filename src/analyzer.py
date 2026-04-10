@@ -1704,7 +1704,13 @@ class GeminiAnalyzer:
 |------|------|------|
 | 最近报告期 | {report_date} | 来自结构化财报字段 |
 | 营业收入 | {financial_report.get('revenue', 'N/A')} | |
+| 总营业收入 | {financial_report.get('total_revenue', 'N/A')} | |
 | 归母净利润 | {financial_report.get('net_profit_parent', 'N/A')} | |
+| 净利润 | {financial_report.get('net_income', 'N/A')} | |
+| 基本每股收益 | {financial_report.get('basic_eps', 'N/A')} | |
+| 营业利润 | {financial_report.get('operate_profit', 'N/A')} | |
+| 利润总额 | {financial_report.get('total_profit', 'N/A')} | |
+| 研发费用 | {financial_report.get('rd_exp', 'N/A')} | |
 | 经营现金流 | {financial_report.get('operating_cash_flow', 'N/A')} | |
 | ROE | {financial_report.get('roe', 'N/A')} | |
 | 近12个月每股现金分红 | {ttm_cash} | 仅现金分红、税前口径 |

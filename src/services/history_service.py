@@ -261,6 +261,7 @@ class HistoryService:
         sniper_points = self._get_display_sniper_points(record, raw_result)
 
         adj_structure = None
+        financial_summary = None
         if isinstance(raw_result, dict):
             adj_structure = raw_result.get("dashboard", {}).get("data_perspective", {}).get("adj_structure", {})
             if not isinstance(adj_structure, dict) or not adj_structure:
@@ -275,6 +276,26 @@ class HistoryService:
                         "date": latest_adj.get("date"),
                         "close": latest_adj.get("close"),
                     },
+                }
+
+            fundamental_ctx = raw_result.get("fundamental_context", {}) if isinstance(raw_result.get("fundamental_context", {}), dict) else {}
+            earnings_data = fundamental_ctx.get("earnings", {}).get("data", {}) if isinstance(fundamental_ctx.get("earnings", {}), dict) else {}
+            financial_summary = earnings_data.get("financial_summary", {}) if isinstance(earnings_data, dict) else {}
+            if not isinstance(financial_summary, dict) or not financial_summary:
+                financial_summary = None
+            else:
+                financial_summary = {
+                    "report_date": financial_summary.get("report_date"),
+                    "total_revenue": financial_summary.get("total_revenue"),
+                    "n_income_attr_p": financial_summary.get("n_income_attr_p"),
+                    "n_income": financial_summary.get("n_income"),
+                    "basic_eps": financial_summary.get("basic_eps"),
+                    "operate_profit": financial_summary.get("operate_profit"),
+                    "total_profit": financial_summary.get("total_profit"),
+                    "rd_exp": financial_summary.get("rd_exp"),
+                    "revenue_yoy": financial_summary.get("revenue_yoy"),
+                    "profit_yoy": financial_summary.get("profit_yoy"),
+                    "roe": financial_summary.get("roe"),
                 }
 
         return {
@@ -297,6 +318,7 @@ class HistoryService:
             "news_content": record.news_content,
             "raw_result": raw_result,
             "adj_structure": adj_structure,
+            "financial_summary": financial_summary,
             "context_snapshot": context_snapshot,
         }
 
