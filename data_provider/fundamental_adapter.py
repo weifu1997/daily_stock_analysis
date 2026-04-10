@@ -318,7 +318,13 @@ class AkshareFundamentalAdapter:
                 gross_margin = _safe_float(_pick_by_keywords(row, ["毛利率"]))
                 report_date = _normalize_report_date(_pick_by_keywords(row, _DIVIDEND_KEYWORD_MAP["report_date"]))
                 revenue = _safe_float(_pick_by_keywords(row, ["营业总收入", "营业收入", "营收"]))
+                total_revenue = _safe_float(_pick_by_keywords(row, ["营业总收入", "总营业收入", "营业收入", "营收"]))
                 net_profit_parent = _safe_float(_pick_by_keywords(row, ["归母净利润", "母公司股东净利润", "净利润"]))
+                net_income = _safe_float(_pick_by_keywords(row, ["净利润", "净收益", "归母净利润"]))
+                basic_eps = _safe_float(_pick_by_keywords(row, ["基本每股收益", "EPS", "每股收益"]))
+                operate_profit = _safe_float(_pick_by_keywords(row, ["营业利润", "营业利润总额"]))
+                total_profit = _safe_float(_pick_by_keywords(row, ["利润总额", "总利润"]))
+                rd_exp = _safe_float(_pick_by_keywords(row, ["研发费用", "研发支出", "研发投入"]))
                 operating_cash_flow = _safe_float(
                     _pick_by_keywords(row, ["经营活动产生的现金流量净额", "经营现金流", "经营活动现金流"])
                 )
@@ -331,12 +337,33 @@ class AkshareFundamentalAdapter:
                 financial_report_payload = {
                     "report_date": report_date,
                     "revenue": revenue,
+                    "total_revenue": total_revenue,
                     "net_profit_parent": net_profit_parent,
+                    "net_income": net_income,
+                    "basic_eps": basic_eps,
+                    "operate_profit": operate_profit,
+                    "total_profit": total_profit,
+                    "rd_exp": rd_exp,
                     "operating_cash_flow": operating_cash_flow,
+                    "roe": roe,
+                }
+                financial_summary_payload = {
+                    "report_date": report_date,
+                    "total_revenue": total_revenue or revenue,
+                    "n_income_attr_p": net_profit_parent,
+                    "n_income": net_income,
+                    "basic_eps": basic_eps,
+                    "operate_profit": operate_profit,
+                    "total_profit": total_profit,
+                    "rd_exp": rd_exp,
+                    "revenue_yoy": revenue_yoy,
+                    "profit_yoy": profit_yoy,
                     "roe": roe,
                 }
                 if any(v is not None for v in financial_report_payload.values()):
                     result["earnings"]["financial_report"] = financial_report_payload
+                if any(v is not None for v in financial_summary_payload.values()):
+                    result["earnings"]["financial_summary"] = financial_summary_payload
                 result["source_chain"].append(f"growth:{fin_source}")
 
         # Earnings forecast
