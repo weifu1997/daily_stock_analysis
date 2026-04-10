@@ -245,6 +245,50 @@ class StockAnalysisPipeline:
             saved_count = self.db.save_daily_data(df, code, source_name)
             logger.info(f"{stock_name}({code}) 数据保存成功（来源: {source_name}，新增 {saved_count} 条）")
 
+            # 最小闭环：顺手补齐 Tushare 复权因子 / 复权日线
+            try:
+                tushare_fetcher = self.fetcher_manager.get_fetcher("TushareFetcher")
+                if tushare_fetcher is not None and getattr(tushare_fetcher, "is_available", lambda: False)():
+                    tushare_source_name = getattr(tushare_fetcher, "name", "TushareFetcher")
+                    date_series = None
+                    if 'date' in df.columns:
+                        date_series = pd.to_datetime(df['date'], errors='coerce')
+                    elif 'trade_date' in df.columns:
+                        date_series = pd.to_datetime(df['trade_date'], errors='coerce')
+
+                    start_date = None
+                    end_date = None
+                    if date_series is not None and not date_series.dropna().empty:
+                        start_date = date_series.min().strftime('%Y-%m-%d')
+                        end_date = date_series.max().strftime('%Y-%m-%d')
+                    else:
+                        end_date = target_date.strftime('%Y-%m-%d') if hasattr(target_date, 'strftime') else str(target_date)
+                        start_date = (datetime.strptime(end_date, '%Y-%m-%d') - timedelta(days=90)).strftime('%Y-%m-%d')
+
+                    adj_factor_df = tushare_fetcher.get_adj_factor_data(
+                        stock_code=code,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    if adj_factor_df is not None and not adj_factor_df.empty:
+                        adj_factor_saved = self.db.save_adj_factor_data(adj_factor_df, code, tushare_source_name)
+                        logger.info(
+                            f"{stock_name}({code}) 复权因子保存成功（新增 {adj_factor_saved} 条）"
+                        )
+
+                    adj_daily_df = tushare_fetcher.get_daily_adj_data(
+                        stock_code=code,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    if adj_daily_df is not None and not adj_daily_df.empty:
+                        adj_daily_saved = self.db.save_daily_adj_data(adj_daily_df, code, tushare_source_name)
+                        logger.info(
+                            f"{stock_name}({code}) 复权日线保存成功（新增 {adj_daily_saved} 条）"
+                        )
+            except Exception as adj_exc:
+                logger.warning(f"{stock_name}({code}) 复权数据补齐失败，但不影响主流程: {adj_exc}")
+
             return True, None
 
         except Exception as e:

@@ -892,6 +892,13 @@ class DataFetcherManager:
         priority_info = ", ".join([f"{f.name}(P{f.priority})" for f in self._get_fetchers_snapshot()])
         logger.info(f"已初始化 {len(self._fetchers)} 个数据源（按优先级）: {priority_info}")
     
+    def get_fetcher(self, fetcher_name: str) -> Optional[BaseFetcher]:
+        """按名称返回当前已初始化的数据源实例。"""
+        for fetcher in self._get_fetchers_snapshot():
+            if fetcher.name == fetcher_name:
+                return fetcher
+        return None
+
     def add_fetcher(self, fetcher: BaseFetcher) -> None:
         """添加数据源并重新排序"""
         self._ensure_concurrency_guards()
@@ -1416,9 +1423,10 @@ class DataFetcherManager:
             return None
 
         circuit_breaker = get_chip_circuit_breaker()
+        # 临时验证顺序：优先走 Tushare，便于确认 cyq_chips / token / 权限是否可用
         source_order = [
-            ("AkShareFetcher", "akshare_chip"),
             ("TushareFetcher", "tushare_chip"),
+            ("AkShareFetcher", "akshare_chip"),
         ]
 
         def _record_chip_event(source: str, status: str, reason: str = "") -> None:

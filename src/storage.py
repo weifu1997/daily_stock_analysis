@@ -65,75 +65,49 @@ if TYPE_CHECKING:
 
 # === 数据模型定义 ===
 
-class StockDaily(Base):
-    """
-    股票日线数据模型
-    
-    存储每日行情数据和计算的技术指标
-    支持多股票、多日期的唯一约束
-    """
-    __tablename__ = 'stock_daily'
-    
-    # 主键
+class AdjFactor(Base):
+    """A股复权因子表。"""
+    __tablename__ = 'adj_factor'
+
     id = Column(Integer, primary_key=True, autoincrement=True)
-    
-    # 股票代码（如 600519, 000001）
     code = Column(String(10), nullable=False, index=True)
-    
-    # 交易日期
     date = Column(Date, nullable=False, index=True)
-    
-    # OHLC 数据
+    adj_factor = Column(Float, nullable=False)
+    data_source = Column(String(50))
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint('code', 'date', name='uix_adj_factor_code_date'),
+        Index('ix_adj_factor_code_date', 'code', 'date'),
+    )
+
+
+class StockDailyAdj(Base):
+    """A股复权日线表。"""
+    __tablename__ = 'stock_daily_adj'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)
     open = Column(Float)
     high = Column(Float)
     low = Column(Float)
     close = Column(Float)
-    
-    # 成交数据
-    volume = Column(Float)  # 成交量（股）
-    amount = Column(Float)  # 成交额（元）
-    pct_chg = Column(Float)  # 涨跌幅（%）
-    
-    # 技术指标
-    ma5 = Column(Float)
-    ma10 = Column(Float)
-    ma20 = Column(Float)
-    volume_ratio = Column(Float)  # 量比
-    
-    # 数据来源
-    data_source = Column(String(50))  # 记录数据来源（如 AkshareFetcher）
-    
-    # 更新时间
+    volume = Column(Float)
+    amount = Column(Float)
+    pct_chg = Column(Float)
+    adj = Column(String(8), default='qfq')
+    adj_factor = Column(Float)
+    data_source = Column(String(50))
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-    
-    # 唯一约束：同一股票同一日期只能有一条数据
+
     __table_args__ = (
-        UniqueConstraint('code', 'date', name='uix_code_date'),
-        Index('ix_code_date', 'code', 'date'),
+        UniqueConstraint('code', 'date', 'adj', name='uix_daily_adj_code_date_adj'),
+        Index('ix_daily_adj_code_date', 'code', 'date'),
     )
-    
-    def __repr__(self):
-        return f"<StockDaily(code={self.code}, date={self.date}, close={self.close})>"
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
-        return {
-            'code': self.code,
-            'date': self.date,
-            'open': self.open,
-            'high': self.high,
-            'low': self.low,
-            'close': self.close,
-            'volume': self.volume,
-            'amount': self.amount,
-            'pct_chg': self.pct_chg,
-            'ma5': self.ma5,
-            'ma10': self.ma10,
-            'ma20': self.ma20,
-            'volume_ratio': self.volume_ratio,
-            'data_source': self.data_source,
-        }
+
 
 
 class NewsIntel(Base):
@@ -1416,6 +1390,138 @@ class DatabaseManager:
             
             return list(results)
     
+    def save_adj_factor_data(
+        self,
+        df: pd.DataFrame,
+        code: str,
+        data_source: str = "TushareFetcher"
+    ) -> int:
+        """保存复权因子到数据库。"""
+        if df is None or df.empty:
+            return 0
+
+        now = datetime.now()
+        records_by_date: Dict[date, Dict[str, Any]] = {}
+        for row in df.to_dict(orient='records'):
+            row_date = self._normalize_daily_date(row.get('trade_date') or row.get('date'))
+            if row_date is None:
+                continue
+            records_by_date[row_date] = {
+                'code': code,
+                'date': row_date,
+                'adj_factor': self._normalize_sql_value(row.get('adj_factor')),
+                'data_source': data_source,
+                'created_at': now,
+                'updated_at': now,
+            }
+
+        if not records_by_date:
+            return 0
+
+        records = list(records_by_date.values())
+        batch_dates = list(records_by_date.keys())
+
+        def _write(session: Session) -> int:
+            existing_rows = {
+                row.date: row
+                for row in session.execute(
+                    select(AdjFactor).where(
+                        and_(
+                            AdjFactor.code == code,
+                            AdjFactor.date.in_(batch_dates),
+                        )
+                    )
+                ).scalars().all()
+            }
+            new_count = 0
+            for record in records:
+                existing = existing_rows.get(record['date'])
+                if existing is None:
+                    session.add(AdjFactor(**record))
+                    new_count += 1
+                    continue
+                existing.adj_factor = record['adj_factor']
+                existing.data_source = record['data_source']
+                existing.updated_at = record['updated_at']
+            return new_count
+
+        return self._run_write_transaction(f"save_adj_factor_data[{code}]", _write)
+
+    def save_daily_adj_data(
+        self,
+        df: pd.DataFrame,
+        code: str,
+        data_source: str = "TushareFetcher",
+        adj: str = "qfq",
+    ) -> int:
+        """保存复权日线到数据库。"""
+        if df is None or df.empty:
+            return 0
+
+        now = datetime.now()
+        records_by_date: Dict[date, Dict[str, Any]] = {}
+        for row in df.to_dict(orient='records'):
+            row_date = self._normalize_daily_date(row.get('date'))
+            if row_date is None:
+                continue
+            records_by_date[row_date] = {
+                'code': code,
+                'date': row_date,
+                'open': self._normalize_sql_value(row.get('open')),
+                'high': self._normalize_sql_value(row.get('high')),
+                'low': self._normalize_sql_value(row.get('low')),
+                'close': self._normalize_sql_value(row.get('close')),
+                'volume': self._normalize_sql_value(row.get('volume')),
+                'amount': self._normalize_sql_value(row.get('amount')),
+                'pct_chg': self._normalize_sql_value(row.get('pct_chg')),
+                'adj': adj,
+                'adj_factor': self._normalize_sql_value(row.get('adj_factor')),
+                'data_source': data_source,
+                'created_at': now,
+                'updated_at': now,
+            }
+
+        if not records_by_date:
+            return 0
+
+        records = list(records_by_date.values())
+        batch_dates = list(records_by_date.keys())
+
+        def _write(session: Session) -> int:
+            existing_rows = {
+                (row.date, row.adj): row
+                for row in session.execute(
+                    select(StockDailyAdj).where(
+                        and_(
+                            StockDailyAdj.code == code,
+                            StockDailyAdj.date.in_(batch_dates),
+                            StockDailyAdj.adj == adj,
+                        )
+                    )
+                ).scalars().all()
+            }
+            new_count = 0
+            for record in records:
+                key = (record['date'], record['adj'])
+                existing = existing_rows.get(key)
+                if existing is None:
+                    session.add(StockDailyAdj(**record))
+                    new_count += 1
+                    continue
+                existing.open = record['open']
+                existing.high = record['high']
+                existing.low = record['low']
+                existing.close = record['close']
+                existing.volume = record['volume']
+                existing.amount = record['amount']
+                existing.pct_chg = record['pct_chg']
+                existing.adj_factor = record['adj_factor']
+                existing.data_source = record['data_source']
+                existing.updated_at = record['updated_at']
+            return new_count
+
+        return self._run_write_transaction(f"save_daily_adj_data[{code}]", _write)
+
     def save_daily_data(
         self, 
         df: pd.DataFrame, 
@@ -1473,12 +1579,7 @@ class DatabaseManager:
 
         def _write(session: Session) -> int:
             if self._is_sqlite_engine:
-                # SQLite has a per-statement bind-parameter limit (commonly 999).
-                # Each record has ~15 columns, so chunk upserts to stay within bounds.
                 _SQLITE_CHUNK = 50
-                # `_run_write_transaction()` opens SQLite writes with
-                # `BEGIN IMMEDIATE`, so existence checks and upsert execute
-                # within one stable write window.
                 existing_dates = set()
                 _COUNT_CHUNK = 500
                 for j in range(0, len(batch_dates), _COUNT_CHUNK):
@@ -1567,7 +1668,7 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"保存 {code} 数据失败: {e}")
             raise
-    
+
     def get_analysis_context(
         self, 
         code: str,

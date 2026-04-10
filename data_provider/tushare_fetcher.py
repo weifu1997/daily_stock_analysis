@@ -1068,77 +1068,116 @@ class TushareFetcher(BaseFetcher):
     
 
     
-    def get_chip_distribution(self, stock_code: str) -> Optional[ChipDistribution]:
-        """
-        获取筹码分布数据
-        
-        数据来源：ts.pro_api().cyq_chips()
-        包含：获利比例、平均成本、筹码集中度
-        
-        注意：ETF/指数没有筹码分布数据，会直接返回 None
-        5000积分以下每天访问15次,每小时访问5次
-        
-        Args:
-            stock_code: 股票代码
-            
-        Returns:
-            ChipDistribution 对象（最新交易日的数据），获取失败返回 None
+    def get_adj_factor_data(
+        self,
+        stock_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取复权因子数据。"""
+        if self._api is None:
+            return None
 
-        """
-        if _is_us_code(stock_code):
-            logger.warning(f"[Tushare] TushareFetcher 不支持美股 {stock_code} 的筹码分布")
-            return None
-        
-        if _is_etf_code(stock_code):
-            logger.warning(f"[Tushare] TushareFetcher 不支持 ETF {stock_code} 的筹码分布")
-            return None
-        
         try:
-            # 19点之后才有当天数据
-            start_date = self.get_trade_time(early_time='00:00', late_time='19:00') 
-            if not start_date:
+            kwargs: Dict[str, Any] = {}
+            if stock_code:
+                kwargs['ts_code'] = self._convert_stock_code(stock_code)
+            if trade_date:
+                kwargs['trade_date'] = trade_date.replace('-', '')
+            if start_date:
+                kwargs['start_date'] = start_date.replace('-', '')
+            if end_date:
+                kwargs['end_date'] = end_date.replace('-', '')
+
+            df = self._call_api_with_rate_limit("adj_factor", **kwargs)
+            if df is None or df.empty:
+                return None
+            return df
+        except Exception as e:
+            logger.warning(f"[Tushare] 获取复权因子失败 {stock_code or '-'}: {e}")
+            return None
+
+    def get_daily_adj_data(
+        self,
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        adj: str = "qfq",
+    ) -> Optional[pd.DataFrame]:
+        """获取复权日线数据（优先 pro_bar；失败则回退到普通日线 + 因子外算）。"""
+        if self._api is None:
+            return None
+
+        def _normalize_adj_df(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            column_mapping = {
+                'trade_date': 'date',
+                'vol': 'volume',
+            }
+            df = df.rename(columns=column_mapping)
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'], format='%Y%m%d', errors='coerce')
+            if 'volume' in df.columns:
+                df['volume'] = pd.to_numeric(df['volume'], errors='coerce') * 100
+            if 'amount' in df.columns:
+                df['amount'] = pd.to_numeric(df['amount'], errors='coerce') * 1000
+            for col in ['open', 'high', 'low', 'close', 'pct_chg', 'adj_factor']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            df['code'] = stock_code
+            df['adj'] = adj
+            keep_cols = ['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg', 'adj_factor', 'adj']
+            existing_cols = [col for col in keep_cols if col in df.columns]
+            return df[existing_cols]
+
+        try:
+            ts_code = self._convert_stock_code(stock_code)
+            pro_bar = getattr(self._api, "pro_bar", None)
+            if callable(pro_bar):
+                df = pro_bar(
+                    ts_code=ts_code,
+                    start_date=start_date.replace('-', ''),
+                    end_date=end_date.replace('-', ''),
+                    asset='E',
+                    adj=adj,
+                    freq='D',
+                )
+                if df is not None and not df.empty:
+                    normalized = _normalize_adj_df(df)
+                    if 'adj_factor' not in normalized.columns:
+                        factor_df = self.get_adj_factor_data(stock_code=stock_code, start_date=start_date, end_date=end_date)
+                        if factor_df is not None and not factor_df.empty:
+                            factor_df = factor_df.copy()
+                            factor_df['trade_date'] = factor_df['trade_date'].astype(str)
+                            factor_df = factor_df.rename(columns={'trade_date': 'date'})
+                            factor_df['date'] = pd.to_datetime(factor_df['date'], format='%Y%m%d', errors='coerce')
+                            normalized = normalized.merge(
+                                factor_df[['date', 'adj_factor']],
+                                on='date',
+                                how='left',
+                            )
+                    return normalized
+        except Exception as e:
+            logger.warning(f"[Tushare] pro_bar 获取复权日线失败 {stock_code}: {e}")
+
+        try:
+            raw_df = self._fetch_raw_data(stock_code, start_date, end_date)
+            if raw_df is None or raw_df.empty:
+                return None
+            factor_df = self.get_adj_factor_data(stock_code=stock_code, start_date=start_date, end_date=end_date)
+            if factor_df is None or factor_df.empty:
                 return None
 
-            ts_code = self._convert_stock_code(stock_code)
-
-            df = self._call_api_with_rate_limit(
-                "cyq_chips",
-                ts_code=ts_code,
-                start_date=start_date,
-                end_date=start_date,
-            )
-            if df is not None and not df.empty:
-                daily_df = self._call_api_with_rate_limit(
-                    "daily",
-                    ts_code=ts_code,
-                    start_date=start_date,
-                    end_date=start_date,
-                )
-                if daily_df is None or daily_df.empty:
-                    return None
-                current_price = daily_df.iloc[0]['close']
-                metrics = self.compute_cyq_metrics(df, current_price)
-
-                chip = ChipDistribution(
-                    code=stock_code,
-                    date=datetime.strptime(start_date, '%Y%m%d').strftime('%Y-%m-%d'),
-                    profit_ratio=metrics['获利比例'],
-                    avg_cost=metrics['平均成本'],
-                    cost_90_low=metrics['90成本-低'],
-                    cost_90_high=metrics['90成本-高'],
-                    concentration_90=metrics['90集中度'],
-                    cost_70_low=metrics['70成本-低'],
-                    cost_70_high=metrics['70成本-高'],
-                    concentration_70=metrics['70集中度'],
-                )
-                
-                logger.info(f"[筹码分布] {stock_code} 日期={chip.date}: 获利比例={chip.profit_ratio:.1%}, "
-                        f"平均成本={chip.avg_cost}, 90%集中度={chip.concentration_90:.2%}, "
-                        f"70%集中度={chip.concentration_70:.2%}")
-                return chip
-
+            raw_df = raw_df.copy()
+            raw_df['trade_date'] = raw_df['trade_date'].astype(str)
+            factor_df = factor_df.copy()
+            factor_df['trade_date'] = factor_df['trade_date'].astype(str)
+            merged = raw_df.merge(factor_df[['trade_date', 'adj_factor']], on='trade_date', how='left')
+            merged['adj_factor'] = merged['adj_factor'].fillna(method='ffill').fillna(method='bfill')
+            return _normalize_adj_df(merged)
         except Exception as e:
-            logger.warning(f"[Tushare] 获取筹码分布失败 {stock_code}: {e}")
+            logger.warning(f"[Tushare] 获取复权日线失败 {stock_code}: {e}")
             return None
 
     def compute_cyq_metrics(self, df: pd.DataFrame, current_price: float) -> dict:
