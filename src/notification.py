@@ -915,7 +915,7 @@ class NotificationService(
                     trend_data = data_persp.get('trend_status', {})
                     price_data = data_persp.get('price_position', {})
                     vol_data = data_persp.get('volume_analysis', {})
-                    chip_data = data_persp.get('chip_structure', {})
+                    adj_data = data_persp.get('adj_structure', {})
                     
                     report_lines.extend([
                         f"### 📊 {labels['data_perspective_heading']}",
@@ -967,6 +967,15 @@ class NotificationService(
                             f"**{labels['chip_label']}**: {chip_data.get('profit_ratio', 'N/A')} | {chip_data.get('avg_cost', 'N/A')} | "
                             f"{chip_data.get('concentration', 'N/A')} {chip_health}",
                             f"   - 来源: {source} | 置信度: {confidence} | 方法: {method}",
+                            "",
+                        ])
+
+                    # 复权结构
+                    if adj_data:
+                        latest_adj = adj_data.get('latest_adj', {}) if isinstance(adj_data.get('latest_adj', {}), dict) else {}
+                        report_lines.extend([
+                            f"**📐 复权数据**: {adj_data.get('adj_source', 'TushareFetcher')} / {adj_data.get('adj_type', 'qfq')} | "
+                            f"因子 {adj_data.get('latest_adj_factor', 'N/A')} | 最新复权收盘 {latest_adj.get('close', 'N/A')} | 日期 {latest_adj.get('date', 'N/A')}",
                             "",
                         ])
                 
