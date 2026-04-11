@@ -1,0 +1,29 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: daily_stock_analysis_searxng_redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - cliproxyapi_default
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: daily_stock_analysis_searxng
+    restart: unless-stopped
+    depends_on:
+      - redis
+    ports:
+      - "127.0.0.1:8088:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8088/
+      - SEARXNG_SECRET_KEY=change-me-please
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./searxng-settings.yml:/etc/searxng/settings.yml:ro
+    networks:
+      - cliproxyapi_default
+
+networks:
+  cliproxyapi_default:
+    external: true
