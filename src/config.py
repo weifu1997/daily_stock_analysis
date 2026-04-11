@@ -1972,7 +1972,7 @@ class Config:
         ]
 
         if not stock_list:
-            stock_list = ['000001']
+            stock_list = []
 
         self.stock_list = stock_list
     

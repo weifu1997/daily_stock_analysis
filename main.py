@@ -804,7 +804,7 @@ def _resolve_mx_preselect_stock_codes(config: Config) -> Optional[List[str]]:
         logger.info('妙想预选池未启用：未在 .env / 持久化配置中配置 MX_PRESELECT_QUERY 或 MX_PRESELECT_PROFILE')
         return None
 
-    skill_path = Path('/root/.openclaw/workspace/skills/mx-xuangu')
+    skill_path = Path('/root/.hermes/skills/mx-xuangu')
     if not skill_path.exists():
         logger.warning('妙想智能选股 skill 未安装，回退到 STOCK_LIST')
         return None
@@ -862,6 +862,7 @@ def _resolve_mx_preselect_stock_codes(config: Config) -> Optional[List[str]]:
                     name_count += 1
         if codes:
             logger.info('妙想预选股成功：source=%s query=%r, data_source=%s, count=%d, name_cached=%d', query_source, preselect_query, data_source, len(codes), name_count)
+            logger.info('妙想预选股返回代码列表：%s', ', '.join(codes))
             if names_by_code:
                 logger.debug('妙想预选名称样本：%s', list(names_by_code.items())[:5])
             return codes
