@@ -1178,21 +1178,59 @@ class Config:
             ),
             bias_threshold=parse_env_float(os.getenv('BIAS_THRESHOLD'), 5.0, field_name='BIAS_THRESHOLD', minimum=1.0),
             mx_enabled=parse_env_bool(
-                os.getenv('MX_ENABLED'),
-                default=bool(os.getenv('MX_APIKEY') or os.getenv('MX_API_KEY')),
+                cls._resolve_env_value('MX_ENABLED'),
+                default=parse_env_bool(
+                    cls._resolve_env_value('MX_APIKEY', prefer_env_file=True)
+                    or cls._resolve_env_value('MX_API_KEY', prefer_env_file=True),
+                    default=False,
+                ),
             ),
-            mx_preselect_profile=os.getenv('MX_PRESELECT_PROFILE') or None,
-            mx_preselect_priority=os.getenv('MX_PRESELECT_PRIORITY', 'false').lower() == 'true',
-            mx_preselect_query=os.getenv('MX_PRESELECT_QUERY') or None,
-            mx_preselect_limit=parse_env_int(os.getenv('MX_PRESELECT_LIMIT'), 50, field_name='MX_PRESELECT_LIMIT', minimum=1),
-            mx_base_url=os.getenv('MX_BASE_URL') or None,
-            mx_apikey=(os.getenv('MX_APIKEY') or os.getenv('MX_API_KEY') or None),
-            mx_api_key=(os.getenv('MX_APIKEY') or os.getenv('MX_API_KEY') or None),
-            mx_timeout_seconds=parse_env_float(os.getenv('MX_TIMEOUT_SECONDS'), 8.0, field_name='MX_TIMEOUT_SECONDS', minimum=0.1),
-            mx_search_primary_provider=(os.getenv('MX_SEARCH_PRIMARY_PROVIDER') or 'mx').strip().lower(),
-            mx_search_fallback_enabled=os.getenv('MX_SEARCH_FALLBACK_ENABLED', 'true').lower() == 'true',
-            mx_search_min_results=parse_env_int(os.getenv('MX_SEARCH_MIN_RESULTS'), 3, field_name='MX_SEARCH_MIN_RESULTS', minimum=1),
-            mx_search_route_timeout_seconds=parse_env_float(os.getenv('MX_SEARCH_ROUTE_TIMEOUT_SECONDS'), 7.5, field_name='MX_SEARCH_ROUTE_TIMEOUT_SECONDS', minimum=0.1),
+            mx_preselect_profile=cls._resolve_env_value('MX_PRESELECT_PROFILE', prefer_env_file=True) or None,
+            mx_preselect_priority=parse_env_bool(
+                cls._resolve_env_value('MX_PRESELECT_PRIORITY', prefer_env_file=True),
+                default=False,
+            ),
+            mx_preselect_query=cls._resolve_env_value('MX_PRESELECT_QUERY', prefer_env_file=True) or None,
+            mx_preselect_limit=parse_env_int(
+                cls._resolve_env_value('MX_PRESELECT_LIMIT', prefer_env_file=True),
+                50,
+                field_name='MX_PRESELECT_LIMIT',
+                minimum=1,
+            ),
+            mx_base_url=cls._resolve_env_value('MX_BASE_URL', prefer_env_file=True) or None,
+            mx_apikey=(
+                cls._resolve_env_value('MX_APIKEY', prefer_env_file=True)
+                or cls._resolve_env_value('MX_API_KEY', prefer_env_file=True)
+                or None
+            ),
+            mx_api_key=(
+                cls._resolve_env_value('MX_APIKEY', prefer_env_file=True)
+                or cls._resolve_env_value('MX_API_KEY', prefer_env_file=True)
+                or None
+            ),
+            mx_timeout_seconds=parse_env_float(
+                cls._resolve_env_value('MX_TIMEOUT_SECONDS', prefer_env_file=True),
+                8.0,
+                field_name='MX_TIMEOUT_SECONDS',
+                minimum=0.1,
+            ),
+            mx_search_primary_provider=(cls._resolve_env_value('MX_SEARCH_PRIMARY_PROVIDER', prefer_env_file=True) or 'mx').strip().lower(),
+            mx_search_fallback_enabled=parse_env_bool(
+                cls._resolve_env_value('MX_SEARCH_FALLBACK_ENABLED', prefer_env_file=True),
+                default=True,
+            ),
+            mx_search_min_results=parse_env_int(
+                cls._resolve_env_value('MX_SEARCH_MIN_RESULTS', prefer_env_file=True),
+                3,
+                field_name='MX_SEARCH_MIN_RESULTS',
+                minimum=1,
+            ),
+            mx_search_route_timeout_seconds=parse_env_float(
+                cls._resolve_env_value('MX_SEARCH_ROUTE_TIMEOUT_SECONDS', prefer_env_file=True),
+                7.5,
+                field_name='MX_SEARCH_ROUTE_TIMEOUT_SECONDS',
+                minimum=0.1,
+            ),
             agent_litellm_model=agent_litellm_model,
             agent_mode=os.getenv('AGENT_MODE', 'false').lower() == 'true',
             _agent_mode_explicit=os.getenv('AGENT_MODE') is not None,

@@ -78,12 +78,17 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         _mock_parse_yaml,
         _mock_setup_env,
     ) -> None:
-        env = {
-            "RUN_IMMEDIATELY": "false",
-        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text("STOCK_LIST=600519\n", encoding="utf-8")
 
-        with patch.dict(os.environ, env, clear=True):
-            config = Config._load_from_env()
+            env = {
+                "RUN_IMMEDIATELY": "false",
+                "ENV_FILE": str(env_path),
+            }
+
+            with patch.dict(os.environ, env, clear=True):
+                config = Config._load_from_env()
 
         self.assertFalse(config.schedule_run_immediately)
         self.assertFalse(config.run_immediately)
@@ -95,13 +100,18 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         _mock_parse_yaml,
         _mock_setup_env,
     ) -> None:
-        env = {
-            "RUN_IMMEDIATELY": "false",
-            "SCHEDULE_RUN_IMMEDIATELY": "true",
-        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text("STOCK_LIST=600519\n", encoding="utf-8")
 
-        with patch.dict(os.environ, env, clear=True):
-            config = Config._load_from_env()
+            env = {
+                "RUN_IMMEDIATELY": "false",
+                "SCHEDULE_RUN_IMMEDIATELY": "true",
+                "ENV_FILE": str(env_path),
+            }
+
+            with patch.dict(os.environ, env, clear=True):
+                config = Config._load_from_env()
 
         self.assertTrue(config.schedule_run_immediately)
         self.assertFalse(config.run_immediately)
@@ -113,12 +123,17 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         _mock_parse_yaml,
         _mock_setup_env,
     ) -> None:
-        env = {
-            "RUN_IMMEDIATELY": "",
-        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text("STOCK_LIST=600519\n", encoding="utf-8")
 
-        with patch.dict(os.environ, env, clear=True):
-            config = Config._load_from_env()
+            env = {
+                "RUN_IMMEDIATELY": "",
+                "ENV_FILE": str(env_path),
+            }
+
+            with patch.dict(os.environ, env, clear=True):
+                config = Config._load_from_env()
 
         self.assertFalse(config.schedule_run_immediately)
         self.assertFalse(config.run_immediately)
@@ -130,13 +145,18 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         _mock_parse_yaml,
         _mock_setup_env,
     ) -> None:
-        env = {
-            "RUN_IMMEDIATELY": "true",
-            "SCHEDULE_RUN_IMMEDIATELY": "",
-        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text("STOCK_LIST=600519\n", encoding="utf-8")
 
-        with patch.dict(os.environ, env, clear=True):
-            config = Config._load_from_env()
+            env = {
+                "RUN_IMMEDIATELY": "true",
+                "SCHEDULE_RUN_IMMEDIATELY": "",
+                "ENV_FILE": str(env_path),
+            }
+
+            with patch.dict(os.environ, env, clear=True):
+                config = Config._load_from_env()
 
         self.assertFalse(config.schedule_run_immediately)
         self.assertTrue(config.run_immediately)
@@ -214,6 +234,45 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
                 config = Config._load_from_env()
 
         self.assertEqual(config.report_language, "en")
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_mx_config_uses_env_file_values_when_process_env_is_absent(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "MX_APIKEY=mx-secret",
+                        "MX_PRESELECT_PRIORITY=true",
+                        "MX_PRESELECT_PROFILE=fundamental",
+                        "MX_PRESELECT_QUERY=A股 正常交易 股价 < 50 非ST 非停牌",
+                        "MX_PRESELECT_LIMIT=30",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "ENV_FILE": str(env_path),
+                },
+                clear=True,
+            ):
+                config = Config._load_from_env()
+
+        self.assertTrue(config.mx_enabled)
+        self.assertEqual(config.mx_apikey, "mx-secret")
+        self.assertTrue(config.mx_preselect_priority)
+        self.assertEqual(config.mx_preselect_profile, "fundamental")
+        self.assertEqual(config.mx_preselect_query, "A股 正常交易 股价 < 50 非ST 非停牌")
+        self.assertEqual(config.mx_preselect_limit, 30)
 
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_runtime_mutable_keys_reload_from_updated_env_file_after_runtime_refresh(
