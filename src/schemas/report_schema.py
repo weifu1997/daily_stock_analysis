@@ -76,6 +76,18 @@ class AdjStructure(BaseModel):
     latest_adj: Optional[AdjLatest] = None
 
 
+class ChipStructure(BaseModel):
+    """Chip distribution structure."""
+
+    profit_ratio: Optional[Union[int, float, str]] = None
+    avg_cost: Optional[Union[int, float, str]] = None
+    concentration: Optional[Union[int, float, str]] = None
+    chip_health: Optional[str] = None
+    source: Optional[str] = None
+    confidence: Optional[Union[int, float, str]] = None
+    method: Optional[str] = None
+
+
 class DataPerspective(BaseModel):
     """Data perspective block.
 
