@@ -474,6 +474,7 @@ def run_full_analysis(
             skipped = set(effective_codes) - set(filtered_codes)
             logger.info("今日休市股票已跳过: %s", skipped)
         stock_codes = filtered_codes
+        logger.info("本轮最终股票列表: %s", stock_codes)
 
         # 命令行参数 --single-notify 覆盖配置（#55）
         if getattr(args, 'single_notify', False):
@@ -485,6 +486,14 @@ def run_full_analysis(
             and config.market_review_enabled
             and not getattr(args, 'no_market_review', False)
             and not config.single_stock_notify
+        )
+        logger.info(
+            "推送模式状态: single_stock_notify=%s, merge_email_notification=%s, market_review_enabled=%s, no_market_review=%s, merge_notification=%s",
+            getattr(config, 'single_stock_notify', False),
+            getattr(config, 'merge_email_notification', False),
+            getattr(config, 'market_review_enabled', False),
+            getattr(args, 'no_market_review', False),
+            merge_notification,
         )
 
         # 创建调度器
