@@ -16,7 +16,21 @@
 
 > 🤖 基于 AI 大模型的 A股自选股智能分析系统，每日自动分析并推送「决策仪表盘」到企业微信/飞书/企业微信/飞书/邮箱/邮箱
 
-[**功能特性**](#-功能特性) · [**快速开始**](#-快速开始) · [**推送效果**](#-推送效果) · [**完整指南**](docs/full-guide.md) · [**常见问题**](docs/FAQ.md) · [**更新日志**](docs/CHANGELOG.md)
+[**功能特性**](#-功能特性) · [**快速开始**](#-快速开始) · [**仓库导览**](docs/REPO_GUIDE.md) · [**推送效果**](#-推送效果) · [**完整指南**](docs/full-guide.md) · [**常见问题**](docs/FAQ.md) · [**更新日志**](docs/CHANGELOG.md)
+
+## 🧭 仓库导览
+
+如果你第一次看这个仓库，别直接在根目录里乱逛，先按下面顺序看：
+
+1. `docs/REPO_GUIDE.md`：先知道每个目录干什么
+2. `main.py`：看主流程怎么串起来
+3. `src/config.py`：看配置怎么进来
+4. `src/core/pipeline.py`：看个股分析链路
+5. `src/search_service.py`：看新闻搜索和 fallback
+6. `src/integrations/mx/`：看妙想增强层怎么接
+7. `tests/`：看回归测试和边界条件
+
+> 这份导览会比直接看根目录更省时间。GitHub 页面上目录很多，不代表代码真的乱，很多只是运行产物或历史兼容层。
 
 简体中文 | [English](docs/README_EN.md) | [繁體中文](docs/README_CHT.md)
 
