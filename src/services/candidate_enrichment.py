@@ -15,6 +15,12 @@ class CandidateEnrichmentService:
         self.mx_client = mx_client
 
     def _mx_enabled(self) -> bool:
+        return bool(
+            self.search_adapter is not None
+            or (self.mx_client and getattr(self.mx_client, "enabled", False))
+        )
+
+    def _mx_data_enabled(self) -> bool:
         return bool(self.mx_client and getattr(self.mx_client, "enabled", False))
 
     def _fetch_signal(self, code: str, name: str = "") -> Optional[MxSignal]:
@@ -42,7 +48,7 @@ class CandidateEnrichmentService:
 
     def _query_data_summary(self, code: str, name: str = "") -> Dict[str, Any]:
         """Fetch a richer mx data summary if supported by the client."""
-        if not self._mx_enabled():
+        if not self._mx_data_enabled():
             return {
                 "mx_data_enabled": False,
                 "mx_data_ok": False,
@@ -82,7 +88,7 @@ class CandidateEnrichmentService:
             enriched_item["mx_risk_flags"] = signal.risk_flags if signal else []
             enriched_item["mx_events"] = [ev.__dict__ for ev in (signal.events if signal else [])]
             enriched_item["mx_data_summary"] = {
-                "mx_data_enabled": self._mx_enabled(),
+                "mx_data_enabled": self._mx_data_enabled(),
                 "mx_data_skipped": True,
                 "reason": "candidate_pool_stage_skip",
             }
@@ -91,6 +97,7 @@ class CandidateEnrichmentService:
 
     def build_report_summary(self, code: str, name: str = "") -> Dict[str, Any]:
         signal = self._fetch_signal(code, name)
+        mx_data_summary = self._query_data_summary(code, name)
         if not signal:
             return {
                 "mx_enabled": False,
@@ -98,10 +105,9 @@ class CandidateEnrichmentService:
                 "mx_theme_tags": [],
                 "mx_risk_flags": [],
                 "mx_events": [],
-                "mx_data_summary": self._query_data_summary(code, name),
+                "mx_data_summary": mx_data_summary,
                 "financial_filter_summary": {"enabled": False},
             }
-        mx_data_summary = self._query_data_summary(code, name)
         financial_summary = mx_data_summary.get("financial_summary") if isinstance(mx_data_summary, dict) else None
         financial_filter_summary = self._build_financial_filters(financial_summary)
         valuation_summary = self._build_valuation_summary(mx_data_summary if isinstance(mx_data_summary, dict) else {})
