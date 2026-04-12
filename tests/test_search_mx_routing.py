@@ -175,6 +175,187 @@ class TestMxSearchRouting(unittest.TestCase):
         self.assertFalse(mx_resp.success)
         self.assertEqual(mx_resp.error_message, "non_financial_query")
 
+    @patch("src.search_service.get_config")
+    def test_comprehensive_intel_uses_mx_hit_before_fallback(self, mock_get_config):
+        mock_get_config.return_value = self._make_config(mx_search_min_results=2)
+        today = datetime.now().date().isoformat()
+        mx_client = MagicMock()
+        mx_client.enabled = True
+        mx_client.search.side_effect = [
+            self._make_mx_resp(
+                [
+                    {
+                        "title": "茅台最新动态",
+                        "summary": "摘要1",
+                        "url": "https://example.com/news-a",
+                        "source": "mx",
+                        "published_at": today,
+                    },
+                    {
+                        "title": "茅台公告更新",
+                        "summary": "摘要2",
+                        "url": "https://example.com/news-b",
+                        "source": "mx",
+                        "published_at": today,
+                    },
+                ]
+            ),
+            self._make_mx_resp(
+                [
+                    {
+                        "title": "茅台研报跟踪",
+                        "summary": "摘要3",
+                        "url": "https://example.com/analysis-a",
+                        "source": "mx",
+                        "published_at": today,
+                    },
+                    {
+                        "title": "茅台机构点评",
+                        "summary": "摘要4",
+                        "url": "https://example.com/analysis-b",
+                        "source": "mx",
+                        "published_at": today,
+                    },
+                ]
+            ),
+        ]
+        fallback_provider = SimpleNamespace(
+            is_available=True,
+            name="Tavily",
+            search=MagicMock(side_effect=AssertionError("fallback should not run when mx hit is enough")),
+        )
+        with patch("src.search_service.MxClient", return_value=mx_client):
+            service = SearchService(
+                bocha_keys=["dummy"],
+                tavily_keys=["dummy"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+            service._providers = [fallback_provider]
+
+        with patch("src.search_service.time.sleep"):
+            intel = service.search_comprehensive_intel("600519", "贵州茅台", max_searches=2)
+
+        self.assertEqual([item.title for item in intel["latest_news"].results], ["茅台最新动态", "茅台公告更新"])
+        self.assertEqual([item.title for item in intel["market_analysis"].results], ["茅台研报跟踪", "茅台机构点评"])
+        self.assertEqual(mx_client.search.call_count, 2)
+        fallback_provider.search.assert_not_called()
+
+    @patch("src.search_service.get_config")
+    def test_comprehensive_intel_respects_mx_fallback_disabled_on_insufficient_results(self, mock_get_config):
+        mock_get_config.return_value = self._make_config(
+            mx_search_min_results=3,
+            mx_search_fallback_enabled=False,
+        )
+        today = datetime.now().date().isoformat()
+        mx_client = MagicMock()
+        mx_client.enabled = True
+        mx_client.search.side_effect = [
+            self._make_mx_resp(
+                [
+                    {
+                        "title": "旧消息",
+                        "summary": "摘要1",
+                        "url": "https://example.com/news-old",
+                        "source": "mx",
+                        "published_at": "2020-01-01",
+                    },
+                    {
+                        "title": "新消息",
+                        "summary": "摘要2",
+                        "url": "https://example.com/news-new",
+                        "source": "mx",
+                        "published_at": today,
+                    },
+                ]
+            ),
+            self._make_mx_resp(
+                [
+                    {
+                        "title": "无日期研报",
+                        "summary": "摘要3",
+                        "url": "https://example.com/analysis-unknown",
+                        "source": "mx",
+                        "published_at": None,
+                    }
+                ]
+            ),
+        ]
+        fallback_provider = SimpleNamespace(
+            is_available=True,
+            name="Tavily",
+            search=MagicMock(side_effect=AssertionError("fallback should stay disabled")),
+        )
+        with patch("src.search_service.MxClient", return_value=mx_client):
+            service = SearchService(
+                bocha_keys=["dummy"],
+                tavily_keys=["dummy"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+            service._providers = [fallback_provider]
+
+        with patch("src.search_service.time.sleep"):
+            intel = service.search_comprehensive_intel("600519", "贵州茅台", max_searches=2)
+
+        self.assertEqual([item.title for item in intel["latest_news"].results], ["新消息"])
+        self.assertEqual([item.title for item in intel["market_analysis"].results], ["无日期研报"])
+        self.assertIsNone(intel["market_analysis"].results[0].published_date)
+        fallback_provider.search.assert_not_called()
+
+    @patch("src.search_service.get_config")
+    def test_comprehensive_intel_preserves_historical_fallback_order(self, mock_get_config):
+        mock_get_config.return_value = self._make_config(mx_enabled=False)
+        calls = []
+
+        def make_provider(name, success=False):
+            def _search(*_args, **_kwargs):
+                calls.append(name)
+                return SearchResponse(
+                    query="贵州茅台 600519 最新 新闻 重大 事件",
+                    results=(
+                        [
+                            SearchResult(
+                                title=f"{name}-result",
+                                snippet="snippet",
+                                url=f"https://example.com/{name}",
+                                source=name,
+                                published_date=datetime.now().date().isoformat(),
+                            )
+                        ]
+                        if success else []
+                    ),
+                    provider=name,
+                    success=success,
+                    error_message=None if success else f"{name}-empty",
+                )
+            return SimpleNamespace(is_available=True, name=name, search=MagicMock(side_effect=_search))
+
+        bocha = make_provider("Bocha")
+        brave = make_provider("Brave", success=True)
+        serpapi = make_provider("SerpAPI", success=True)
+
+        with patch("src.search_service.MxClient"):
+            service = SearchService(
+                bocha_keys=["dummy"],
+                brave_keys=["dummy"],
+                serpapi_keys=["dummy"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+            service._providers = [bocha, brave, serpapi]
+
+        with patch("src.search_service.time.sleep"):
+            intel = service.search_comprehensive_intel("600519", "贵州茅台", max_searches=1)
+
+        self.assertEqual(calls, ["Brave"])
+        self.assertEqual([item.title for item in intel["latest_news"].results], ["Brave-result"])
+        serpapi.search.assert_not_called()
+        bocha.search.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

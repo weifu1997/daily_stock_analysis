@@ -2781,6 +2781,174 @@ class SearchService:
             )
         return search_kwargs
 
+    def _dimension_response(
+        self,
+        response: SearchResponse,
+        *,
+        strict_freshness: bool,
+        search_days: int,
+        max_results: int,
+        log_scope: str,
+    ) -> SearchResponse:
+        """Apply per-dimension freshness/normalization policy in one place."""
+        if strict_freshness:
+            return self._filter_news_response(
+                response,
+                search_days=search_days,
+                max_results=max_results,
+                log_scope=log_scope,
+            )
+        return self._normalize_and_limit_response(
+            response,
+            max_results=max_results,
+        )
+
+    def _fallback_providers_for_comprehensive_intel(self) -> List[Any]:
+        """Preserve the historical fallback priority for comprehensive intel."""
+        available = [provider for provider in self._providers if provider and getattr(provider, "is_available", False)]
+        if not available:
+            return []
+
+        explicit_order = ["searxng", "tavily", "brave", "serpapi", "bocha", "minimax"]
+        providers_by_name = {
+            str(getattr(provider, "name", provider.__class__.__name__)).lower(): provider
+            for provider in available
+        }
+
+        ordered: List[Any] = []
+        seen: set[int] = set()
+        for name in explicit_order:
+            provider = providers_by_name.get(name)
+            if provider is None:
+                continue
+            provider_id = id(provider)
+            if provider_id in seen:
+                continue
+            ordered.append(provider)
+            seen.add(provider_id)
+
+        for provider in available:
+            provider_id = id(provider)
+            if provider_id in seen:
+                continue
+            ordered.append(provider)
+            seen.add(provider_id)
+
+        return ordered
+
+    @staticmethod
+    def _provider_search_response(
+        provider: Any,
+        query: str,
+        *,
+        max_results: int,
+        days: int,
+        tavily_topic: Optional[str] = None,
+    ) -> SearchResponse:
+        """Execute one provider search with dimension-specific kwargs."""
+        if isinstance(provider, TavilySearchProvider) and tavily_topic:
+            return provider.search(
+                query,
+                max_results=max_results,
+                days=days,
+                topic=tavily_topic,
+            )
+        return provider.search(
+            query,
+            max_results=max_results,
+            days=days,
+        )
+
+    def _search_dimension_with_fallback(
+        self,
+        *,
+        dimension: Dict[str, Any],
+        stock_code: str,
+        stock_name: str,
+        provider_max_results: int,
+        search_days: int,
+        target_per_dimension: int,
+        fallback_providers: List[Any],
+    ) -> Optional[SearchResponse]:
+        """Run MX first, then fallback providers, and always normalize the final payload."""
+        dimension_name = dimension['name']
+        dimension_desc = dimension['desc']
+        tavily_topic = dimension.get('tavily_topic')
+
+        mx_response = self._mx_search_with_timeout(
+            dimension['query'],
+            max_results=provider_max_results,
+            days=search_days,
+            route_label=f"search_comprehensive_intel:{dimension_name}",
+            stock_code=stock_code,
+            stock_name=stock_name,
+            topic=tavily_topic or 'news',
+        )
+        if mx_response.success and mx_response.results and len(mx_response.results) >= self.mx_search_min_results:
+            filtered_response = self._dimension_response(
+                mx_response,
+                strict_freshness=dimension['strict_freshness'],
+                search_days=search_days,
+                max_results=target_per_dimension,
+                log_scope=f"{stock_code}:mx-search:{dimension_name}",
+            )
+            logger.info(
+                "[情报搜索] %s: mx-search 命中，原始=%s条, 过滤后=%s条",
+                dimension_desc,
+                len(mx_response.results),
+                len(filtered_response.results),
+            )
+            return filtered_response
+
+        if mx_response.success and mx_response.results and not self.mx_search_fallback_enabled:
+            filtered_response = self._dimension_response(
+                mx_response,
+                strict_freshness=dimension['strict_freshness'],
+                search_days=search_days,
+                max_results=target_per_dimension,
+                log_scope=f"{stock_code}:mx-search:{dimension_name}",
+            )
+            logger.info(
+                "[情报搜索] %s: mx-search 结果不足但 fallback 关闭，直接返回",
+                dimension_desc,
+            )
+            return filtered_response
+
+        fallback_response = None
+        for provider in fallback_providers:
+            logger.info(f"[情报搜索] {dimension_desc}: 使用 {provider.name}")
+            response = self._provider_search_response(
+                provider,
+                dimension['query'],
+                max_results=provider_max_results,
+                days=search_days,
+                tavily_topic=tavily_topic,
+            )
+            fallback_response = response
+            if response.success and response.results:
+                break
+
+        if fallback_response is None:
+            return None
+
+        filtered_response = self._dimension_response(
+            fallback_response,
+            strict_freshness=dimension['strict_freshness'],
+            search_days=search_days,
+            max_results=target_per_dimension,
+            log_scope=f"{stock_code}:{fallback_response.provider}:{dimension_name}",
+        )
+        if fallback_response.success:
+            logger.info(
+                "[情报搜索] %s: 原始=%s条, 过滤后=%s条",
+                dimension_desc,
+                len(fallback_response.results),
+                len(filtered_response.results),
+            )
+        else:
+            logger.warning(f"[情报搜索] {dimension_desc}: 搜索失败 - {fallback_response.error_message}")
+        return filtered_response
+
     def search_stock_news(
         self,
         stock_code: str,
@@ -3221,112 +3389,26 @@ class SearchService:
             provider_max_results,
         )
         
-        primary_fallback_priority = ["searxng", "tavily"]
-        secondary_fallback_priority = ["brave", "serpapi", "bocha", "minimax"]
-        provider_map = {p.name.lower(): p for p in self._providers if p.is_available}
+        fallback_providers = self._fallback_providers_for_comprehensive_intel()
         
         for dim in search_dimensions:
             if search_count >= max_searches:
                 break
 
-            mx_response = self._mx_search_with_timeout(
-                dim['query'],
-                max_results=provider_max_results,
-                days=search_days,
-                route_label=f"search_comprehensive_intel:{dim['name']}",
+            filtered_response = self._search_dimension_with_fallback(
+                dimension=dim,
                 stock_code=stock_code,
                 stock_name=stock_name,
-                topic=dim.get('tavily_topic') or 'news',
+                provider_max_results=provider_max_results,
+                search_days=search_days,
+                target_per_dimension=target_per_dimension,
+                fallback_providers=fallback_providers,
             )
-            if mx_response.success and mx_response.results and len(mx_response.results) >= self.mx_search_min_results:
-                filtered_response = self._filter_news_response(
-                    mx_response,
-                    search_days=search_days,
-                    max_results=target_per_dimension,
-                    log_scope=f"{stock_code}:mx-search:{dim['name']}",
-                ) if dim['strict_freshness'] else self._normalize_and_limit_response(
-                    mx_response,
-                    max_results=target_per_dimension,
-                )
-                results[dim['name']] = filtered_response
-                search_count += 1
-                logger.info(
-                    "[情报搜索] %s: mx-search 命中，原始=%s条, 过滤后=%s条",
-                    dim['desc'],
-                    len(mx_response.results),
-                    len(filtered_response.results),
-                )
-                continue
-            if mx_response.success and mx_response.results and not self.mx_search_fallback_enabled:
-                filtered_response = self._filter_news_response(
-                    mx_response,
-                    search_days=search_days,
-                    max_results=target_per_dimension,
-                    log_scope=f"{stock_code}:mx-search:{dim['name']}",
-                ) if dim['strict_freshness'] else self._normalize_and_limit_response(
-                    mx_response,
-                    max_results=target_per_dimension,
-                )
-                results[dim['name']] = filtered_response
-                search_count += 1
-                logger.info(
-                    "[情报搜索] %s: mx-search 结果不足但 fallback 关闭，直接返回",
-                    dim['desc'],
-                )
-                continue
-
-            fallback_response = None
-            fallback_chain = primary_fallback_priority + secondary_fallback_priority
-            for provider_name in fallback_chain:
-                provider = provider_map.get(provider_name)
-                if not provider:
-                    continue
-                logger.info(f"[情报搜索] {dim['desc']}: 使用 {provider.name}")
-                if isinstance(provider, TavilySearchProvider) and dim.get('tavily_topic'):
-                    response = provider.search(
-                        dim['query'],
-                        max_results=provider_max_results,
-                        days=search_days,
-                        topic=dim['tavily_topic'],
-                    )
-                else:
-                    response = provider.search(
-                        dim['query'],
-                        max_results=provider_max_results,
-                        days=search_days,
-                    )
-                fallback_response = response
-                if response.success and response.results:
-                    break
-
-            if fallback_response is None:
+            if filtered_response is None:
                 break
 
-            response = fallback_response
-            if dim['strict_freshness']:
-                filtered_response = self._filter_news_response(
-                    response,
-                    search_days=search_days,
-                    max_results=target_per_dimension,
-                    log_scope=f"{stock_code}:{response.provider}:{dim['name']}",
-                )
-            else:
-                filtered_response = self._normalize_and_limit_response(
-                    response,
-                    max_results=target_per_dimension,
-                )
             results[dim['name']] = filtered_response
             search_count += 1
-            
-            if response.success:
-                logger.info(
-                    "[情报搜索] %s: 原始=%s条, 过滤后=%s条",
-                    dim['desc'],
-                    len(response.results),
-                    len(filtered_response.results),
-                )
-            else:
-                logger.warning(f"[情报搜索] {dim['desc']}: 搜索失败 - {response.error_message}")
             
             # 短暂延迟避免请求过快
             time.sleep(0.5)
