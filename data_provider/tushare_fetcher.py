@@ -1174,7 +1174,7 @@ class TushareFetcher(BaseFetcher):
             factor_df = factor_df.copy()
             factor_df['trade_date'] = factor_df['trade_date'].astype(str)
             merged = raw_df.merge(factor_df[['trade_date', 'adj_factor']], on='trade_date', how='left')
-            merged['adj_factor'] = merged['adj_factor'].fillna(method='ffill').fillna(method='bfill')
+            merged['adj_factor'] = merged['adj_factor'].ffill().bfill()
             return _normalize_adj_df(merged)
         except Exception as e:
             logger.warning(f"[Tushare] 获取复权日线失败 {stock_code}: {e}")
