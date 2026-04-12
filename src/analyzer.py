@@ -193,7 +193,6 @@ def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dic
         source = getattr(chip_data, "source", "estimated")
         confidence = _safe_float(getattr(chip_data, "confidence", None), default=None)
         method = getattr(chip_data, "method", "")
-        avg_cost_out: Any = raw_avg_cost if isinstance(raw_avg_cost, str) else (ac if ac not in (None, 0.0) else "N/A")
     else:
         d = chip_data if isinstance(chip_data, dict) else {}
         pr = _safe_float(d.get("profit_ratio"), default=0.0) or 0.0
@@ -203,15 +202,33 @@ def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dic
         source = d.get("source", "estimated")
         confidence = _safe_float(d.get("confidence"), default=None)
         method = d.get("method", "")
-        avg_cost_out = raw_avg_cost if isinstance(raw_avg_cost, str) else (ac if ac not in (None, 0.0) else "N/A")
+
+    avg_cost_out: Any
+    if isinstance(raw_avg_cost, str):
+        avg_cost_out = raw_avg_cost
+    elif ac in (None, 0.0):
+        avg_cost_out = "N/A"
+    else:
+        avg_cost_out = ac
+
+    confidence_out: Any
+    if confidence is None:
+        confidence_out = "N/A"
+    else:
+        confidence_out = f"{confidence:.0%}"
+
     chip_health = _derive_chip_health(pr, c90, language=language)
     return {
         "profit_ratio": f"{pr:.1%}",
+        "profit_ratio_raw": pr,
         "avg_cost": avg_cost_out,
+        "avg_cost_raw": ac if ac is not None else None,
         "concentration": f"{c90:.2%}",
+        "concentration_raw": c90,
         "chip_health": chip_health,
         "source": source or "estimated",
-        "confidence": confidence if confidence is not None else "N/A",
+        "confidence": confidence_out,
+        "confidence_raw": confidence,
         "method": method or "truncated_gaussian",
     }
 
@@ -235,6 +252,9 @@ def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> N
         for k in _CHIP_KEYS:
             if _is_value_placeholder(merged.get(k)) and not _is_value_placeholder(filled.get(k)):
                 merged[k] = filled[k]
+        for raw_key in ("profit_ratio_raw", "avg_cost_raw", "concentration_raw", "confidence_raw"):
+            if raw_key not in merged and raw_key in filled:
+                merged[raw_key] = filled[raw_key]
         if merged.get("source") in (None, "", "N/A", "n/a", "NA", "na", "数据缺失"):
             merged["source"] = filled.get("source", "estimated")
         if _is_value_placeholder(merged.get("method")):
