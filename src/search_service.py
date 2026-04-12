@@ -2810,24 +2810,31 @@ class SearchService:
             provider_max_results,
         )
 
-        mx_response = self._mx_search_with_timeout(
-            query,
-            max_results=provider_max_results,
-            days=search_days,
-            route_label="search_stock_news",
-            stock_code=stock_code,
-            stock_name=stock_name,
-            topic="news",
+        allow_mx_primary = bool(
+            self.mx_enabled
+            and self.mx_search_primary_provider == "mx"
+            and not self._is_foreign_stock(stock_code)
+            and all(isinstance(p, BaseSearchProvider) for p in self._providers)
         )
-        if mx_response.success and mx_response.results and len(mx_response.results) >= self.mx_search_min_results:
-            limited_mx_response = self._limit_search_response(mx_response, max_results=max_results)
-            self._put_cache(
-                self._cache_key(f"mx:{query}|news_pref={'zh' if prefer_chinese else 'default'}", max_results, search_days),
-                limited_mx_response,
+        if allow_mx_primary:
+            mx_response = self._mx_search_with_timeout(
+                query,
+                max_results=provider_max_results,
+                days=search_days,
+                route_label="search_stock_news",
+                stock_code=stock_code,
+                stock_name=stock_name,
+                topic="news",
             )
-            return limited_mx_response
-        if mx_response.success and mx_response.results and not self.mx_search_fallback_enabled:
-            return self._limit_search_response(mx_response, max_results=max_results)
+            if mx_response.success and mx_response.results and len(mx_response.results) >= self.mx_search_min_results:
+                limited_mx_response = self._limit_search_response(mx_response, max_results=max_results)
+                self._put_cache(
+                    self._cache_key(f"mx:{query}|news_pref={'zh' if prefer_chinese else 'default'}", max_results, search_days),
+                    limited_mx_response,
+                )
+                return limited_mx_response
+            if mx_response.success and mx_response.results and not self.mx_search_fallback_enabled:
+                return self._limit_search_response(mx_response, max_results=max_results)
 
         cache_key = self._cache_key(
             f"{query}|news_pref={'zh' if prefer_chinese else 'default'}",
@@ -2855,19 +2862,15 @@ class SearchService:
             fallback_response: Optional[SearchResponse] = None
             best_preferred_response: Optional[SearchResponse] = None
             best_preferred_count = 0
-            primary_fallback_priority = ["searxng", "tavily"]
-            secondary_fallback_priority = ["brave", "serpapi", "bocha", "minimax"]
-            provider_map = {p.name.lower(): p for p in self._providers if p.is_available}
-            fallback_chain = primary_fallback_priority + secondary_fallback_priority
-            for provider_name in fallback_chain:
-                provider = provider_map.get(provider_name)
-                if not provider:
+            for provider in self._providers:
+                if not provider or not getattr(provider, "is_available", False):
                     continue
 
+                provider_name = str(getattr(provider, "name", provider.__class__.__name__)).lower()
                 search_kwargs: Dict[str, Any] = {}
-                if isinstance(provider, TavilySearchProvider):
+                if isinstance(provider, TavilySearchProvider) or provider_name == "tavily":
                     search_kwargs["topic"] = "news"
-                elif isinstance(provider, BraveSearchProvider):
+                elif isinstance(provider, BraveSearchProvider) or provider_name == "brave":
                     search_kwargs.update(
                         self._brave_search_locale(
                             stock_code,
