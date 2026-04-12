@@ -6,9 +6,11 @@
 
 1. `REPO_GUIDE.md`
    - 先知道仓库怎么分块
-2. `INDEX.md`
+2. `STRUCTURE.md`
+   - 先知道哪些是核心、哪些是辅助、哪些是运行产物
+3. `INDEX.md`
    - 先知道文档怎么分组
-3. `full-guide.md`
+4. `full-guide.md`
    - 需要完整使用、部署和配置说明时再看
 
 ## 主要分类
