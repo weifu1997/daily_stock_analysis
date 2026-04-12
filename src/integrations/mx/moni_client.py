@@ -11,6 +11,17 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+def _resolve_skill_file() -> Path:
+    """Resolve mx-moni skill file from env or legacy default path."""
+    env_file = (os.getenv('MX_MONI_SKILL_FILE') or '').strip()
+    if env_file:
+        return Path(env_file).expanduser()
+    env_dir = (os.getenv('MX_MONI_SKILL_DIR') or os.getenv('MX_SKILL_DIR') or '').strip()
+    if env_dir:
+        return Path(env_dir).expanduser() / 'mx_moni.py'
+    return Path('/root/.openclaw/workspace/skills/mx-moni/mx_moni.py')
+
+
 class MxMoniClient:
     def __init__(self, apikey: Optional[str] = None) -> None:
         self.apikey = (apikey or "").strip()
@@ -21,7 +32,7 @@ class MxMoniClient:
     def _load_module(self):
         if self._module is not None:
             return self._module
-        skill_file = Path('/root/.openclaw/workspace/skills/mx-moni/mx_moni.py')
+        skill_file = _resolve_skill_file()
         if not skill_file.exists():
             raise FileNotFoundError(f"mx-moni skill not found: {skill_file}")
         spec = importlib.util.spec_from_file_location('mx_moni_skill', skill_file)
@@ -37,7 +48,11 @@ class MxMoniClient:
         old_apikey = os.environ.get('MX_APIKEY')
         os.environ['MX_APIKEY'] = self.apikey
         try:
-            mod.MX_APIKEY = self.apikey
+            if hasattr(mod, 'MX_APIKEY'):
+                try:
+                    setattr(mod, 'MX_APIKEY', self.apikey)
+                except Exception:
+                    logger.debug('mx-moni skill module does not allow MX_APIKEY assignment', exc_info=True)
             mod.make_request(endpoint, body, output_prefix)
             output_path = Path(mod.OUTPUT_DIR) / f"{output_prefix}_raw.json"
             if not output_path.exists():

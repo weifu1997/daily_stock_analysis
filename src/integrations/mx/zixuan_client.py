@@ -14,12 +14,22 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
 
 from data_provider.base import canonical_stock_code
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_skill_path() -> Path:
+    """Resolve mx-zixuan skill directory from env or legacy default path."""
+    env_dir = (os.getenv('MX_ZIXUAN_SKILL_DIR') or os.getenv('MX_SKILL_DIR') or '').strip()
+    if env_dir:
+        return Path(env_dir).expanduser()
+    return Path('/root/.openclaw/workspace/skills/mx-zixuan')
 
 
 class MxZixuanClient:
@@ -63,9 +73,10 @@ class MxZixuanClient:
         self._skill_imported = True
         try:
             import sys
-            from pathlib import Path
 
-            skill_path = Path('/root/.openclaw/workspace/skills/mx-zixuan')
+            skill_path = _resolve_skill_path()
+            if not skill_path.exists():
+                raise FileNotFoundError(f"mx-zixuan skill path not found: {skill_path}")
             if str(skill_path) not in sys.path:
                 sys.path.insert(0, str(skill_path))
 
@@ -77,7 +88,6 @@ class MxZixuanClient:
             logger.warning("加载 mx-zixuan skill 失败: %s", exc)
             self._skill = None
             return None
-
     def list_codes(self) -> List[str]:
         skill = self._load_skill()
         if skill is None:
