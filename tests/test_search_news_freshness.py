@@ -9,6 +9,21 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+
+def _make_search_config(**overrides) -> SimpleNamespace:
+    base = {
+        "mx_enabled": False,
+        "mx_search_primary_provider": "mx",
+        "mx_search_fallback_enabled": True,
+        "mx_search_min_results": 3,
+        "mx_search_route_timeout_seconds": 1.0,
+        "mx_timeout_seconds": 1.0,
+        "news_max_age_days": 3,
+        "news_strategy_profile": "short",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
 # Mock newspaper before search_service import (optional dependency)
 if "newspaper" not in sys.modules:
     mock_np = MagicMock()
@@ -48,12 +63,18 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
         news_strategy_profile: str = "short",
         response: SearchResponse | None = None,
     ):
-        service = SearchService(
-            bocha_keys=["dummy_key"],
-            searxng_public_instances_enabled=False,
+        cfg = _make_search_config(
+            mx_enabled=False,
             news_max_age_days=news_max_age_days,
             news_strategy_profile=news_strategy_profile,
         )
+        with patch("src.search_service.get_config", return_value=cfg):
+            service = SearchService(
+                bocha_keys=["dummy_key"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=news_max_age_days,
+                news_strategy_profile=news_strategy_profile,
+            )
         mock_search = MagicMock(
             return_value=response
             or _response([_result("default", datetime.now().date().isoformat())])

@@ -317,19 +317,29 @@ def test_notification():
     """测试通知推送"""
     print_header("5. 通知推送测试")
     
-    from src.notification import NotificationService
+    from src.notification import NotificationChannel, NotificationService
     from src.config import get_config
     
     config = get_config()
     service = NotificationService()
+    available_channels = service.get_available_channels()
     
     print_section("配置检查")
-    if service.is_available():
-        print(f"  ✓ 企业微信 Webhook 已配置")
-        webhook_preview = config.wechat_webhook_url[:50] + "..." if len(config.wechat_webhook_url) > 50 else config.wechat_webhook_url
-        print(f"    URL: {webhook_preview}")
+    if not service.is_available():
+        print("  ✗ 未检测到可用通知渠道")
+        return
+
+    channel_names = service.get_channel_names() or "上下文渠道"
+    print(f"  ✓ 已检测到通知渠道: {channel_names}")
+
+    if NotificationChannel.WECHAT in available_channels:
+        webhook_url = getattr(config, "wechat_webhook_url", None) or ""
+        webhook_preview = webhook_url[:50] + "..." if len(webhook_url) > 50 else webhook_url
+        print("  ✓ 企业微信 Webhook 已配置")
+        if webhook_preview:
+            print(f"    URL: {webhook_preview}")
     else:
-        print(f"  ✗ 企业微信 Webhook 未配置")
+        print("  · 企业微信 Webhook 未配置，本次跳过企业微信直连发送测试")
         return
     
     print_section("发送测试消息")

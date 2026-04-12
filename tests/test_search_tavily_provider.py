@@ -6,8 +6,23 @@ Regression tests for Tavily news-mode date mapping (Issue #782).
 import sys
 import unittest
 from datetime import datetime, timezone
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+
+def _make_search_config(**overrides) -> SimpleNamespace:
+    base = {
+        "mx_enabled": False,
+        "mx_search_primary_provider": "mx",
+        "mx_search_fallback_enabled": True,
+        "mx_search_min_results": 3,
+        "mx_search_route_timeout_seconds": 1.0,
+        "mx_timeout_seconds": 1.0,
+        "news_max_age_days": 3,
+        "news_strategy_profile": "short",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
 
 # Mock newspaper before search_service import (optional dependency)
 if "newspaper" not in sys.modules:
@@ -140,7 +155,7 @@ class TestTavilySearchProvider(unittest.TestCase):
                             }
                         ]
                     }
-                ):
+                ), patch("src.search_service.get_config", return_value=_make_search_config(news_max_age_days=3, news_strategy_profile="short")):
                     service = SearchService(
                         tavily_keys=["dummy_key"],
                         searxng_public_instances_enabled=False,
@@ -165,7 +180,7 @@ class TestTavilySearchProvider(unittest.TestCase):
                     }
                 ]
             }
-        ):
+        ), patch("src.search_service.get_config", return_value=_make_search_config()):
             service = SearchService(
                 tavily_keys=["dummy_key"],
                 searxng_public_instances_enabled=False,
@@ -191,7 +206,7 @@ class TestTavilySearchProvider(unittest.TestCase):
                     }
                 ]
             }
-        ):
+        ), patch("src.search_service.get_config", return_value=_make_search_config(news_max_age_days=3, news_strategy_profile="short")):
             service = SearchService(
                 tavily_keys=["dummy_key"],
                 searxng_public_instances_enabled=False,
@@ -221,7 +236,7 @@ class TestTavilySearchProvider(unittest.TestCase):
                     }
                 ]
             }
-        ):
+        ), patch("src.search_service.get_config", return_value=_make_search_config(news_max_age_days=3, news_strategy_profile="short")):
             service = SearchService(
                 tavily_keys=["dummy_key"],
                 searxng_public_instances_enabled=False,
@@ -253,7 +268,7 @@ class TestTavilySearchProvider(unittest.TestCase):
                     }
                 ]
             }
-        ):
+        ), patch("src.search_service.get_config", return_value=_make_search_config(news_max_age_days=3, news_strategy_profile="short")):
             service = SearchService(
                 tavily_keys=["dummy_key"],
                 searxng_public_instances_enabled=False,
