@@ -143,6 +143,30 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             requested = args[1]
         self.assertEqual(requested, 8)
 
+    def test_search_stock_news_mx_primary_guard_requires_standard_provider_stack(self) -> None:
+        """MX primary should stay off when tests inject non-BaseSearchProvider providers."""
+        cfg = _make_search_config(mx_enabled=True)
+        with patch("src.search_service.get_config", return_value=cfg):
+            service = SearchService(
+                bocha_keys=["dummy_key"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+
+        self.assertTrue(service._should_use_mx_primary_for_stock_news("600519"))
+        self.assertFalse(service._should_use_mx_primary_for_stock_news("AAPL"))
+
+        provider = SimpleNamespace(
+            is_available=True,
+            name="Injected",
+            search=MagicMock(return_value=_response([_result("fresh", datetime.now().date().isoformat())])),
+        )
+        service._providers = [provider]
+
+        self.assertFalse(service._should_use_mx_primary_for_stock_news("600519"))
+        self.assertFalse(service._should_use_mx_primary_for_stock_news("AAPL"))
+
     def test_search_stock_news_try_next_provider_when_filtered_empty(self) -> None:
         """If provider-A passes API call but all results are filtered, continue to provider-B."""
         today = datetime.now().date()

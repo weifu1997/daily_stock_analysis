@@ -2751,6 +2751,36 @@ class SearchService:
             search_time=response.search_time,
         )
 
+    def _should_use_mx_primary_for_stock_news(self, stock_code: str) -> bool:
+        """Only let MX preempt legacy providers for standard A-share news routing."""
+        return bool(
+            self.mx_enabled
+            and self.mx_search_primary_provider == "mx"
+            and not self._is_foreign_stock(stock_code)
+            and all(isinstance(provider, BaseSearchProvider) for provider in self._providers)
+        )
+
+    @staticmethod
+    def _provider_search_kwargs(
+        provider: Any,
+        *,
+        stock_code: str,
+        prefer_chinese: bool,
+    ) -> Dict[str, Any]:
+        """Build provider-specific kwargs for stock-news searches."""
+        provider_name = str(getattr(provider, "name", provider.__class__.__name__)).lower()
+        search_kwargs: Dict[str, Any] = {}
+        if isinstance(provider, TavilySearchProvider) or provider_name == "tavily":
+            search_kwargs["topic"] = "news"
+        elif isinstance(provider, BraveSearchProvider) or provider_name == "brave":
+            search_kwargs.update(
+                SearchService._brave_search_locale(
+                    stock_code,
+                    prefer_chinese=prefer_chinese,
+                )
+            )
+        return search_kwargs
+
     def search_stock_news(
         self,
         stock_code: str,
@@ -2810,13 +2840,7 @@ class SearchService:
             provider_max_results,
         )
 
-        allow_mx_primary = bool(
-            self.mx_enabled
-            and self.mx_search_primary_provider == "mx"
-            and not self._is_foreign_stock(stock_code)
-            and all(isinstance(p, BaseSearchProvider) for p in self._providers)
-        )
-        if allow_mx_primary:
+        if self._should_use_mx_primary_for_stock_news(stock_code):
             mx_response = self._mx_search_with_timeout(
                 query,
                 max_results=provider_max_results,
@@ -2866,17 +2890,11 @@ class SearchService:
                 if not provider or not getattr(provider, "is_available", False):
                     continue
 
-                provider_name = str(getattr(provider, "name", provider.__class__.__name__)).lower()
-                search_kwargs: Dict[str, Any] = {}
-                if isinstance(provider, TavilySearchProvider) or provider_name == "tavily":
-                    search_kwargs["topic"] = "news"
-                elif isinstance(provider, BraveSearchProvider) or provider_name == "brave":
-                    search_kwargs.update(
-                        self._brave_search_locale(
-                            stock_code,
-                            prefer_chinese=prefer_chinese,
-                        )
-                    )
+                search_kwargs = self._provider_search_kwargs(
+                    provider,
+                    stock_code=stock_code,
+                    prefer_chinese=prefer_chinese,
+                )
 
                 response = provider.search(query, provider_max_results, days=search_days, **search_kwargs)
                 filtered_response = self._filter_news_response(

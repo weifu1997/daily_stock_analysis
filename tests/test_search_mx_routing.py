@@ -120,6 +120,23 @@ class TestMxSearchRouting(unittest.TestCase):
         self.assertEqual([r.title for r in resp.results], ["旧provider结果"])
 
     @patch("src.search_service.get_config")
+    def test_us_stock_never_uses_mx_primary(self, mock_get_config):
+        mock_get_config.return_value = self._make_config()
+        mx_client = MagicMock()
+        mx_client.enabled = True
+        with patch("src.search_service.MxClient", return_value=mx_client):
+            service = SearchService(
+                bocha_keys=["dummy"],
+                tavily_keys=["dummy"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+
+        self.assertFalse(service._should_use_mx_primary_for_stock_news("AAPL"))
+        self.assertFalse(service._should_use_mx_primary_for_stock_news("TSLA"))
+
+    @patch("src.search_service.get_config")
     def test_non_financial_query_directly_uses_fallback(self, mock_get_config):
         mock_get_config.return_value = self._make_config()
         mx_client = MagicMock()
