@@ -29,7 +29,7 @@ class TestAgentSSECleanup(unittest.IsolatedAsyncioTestCase):
         Simulate the finally block in event_generator:
           - fut is a Future that raises *fut_exception* when awaited with wait_for.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fut = loop.create_future()
         if isinstance(fut_exception, BaseException):
             fut.set_exception(fut_exception)

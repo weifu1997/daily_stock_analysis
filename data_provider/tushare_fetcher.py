@@ -75,6 +75,8 @@ def _is_us_code(stock_code: str) -> bool:
 class _TushareHttpClient:
     """Lightweight Tushare Pro client that does not require the tushare SDK."""
 
+    supports_pro_bar = False
+
     def __init__(self, token: str, timeout: int = 30, api_url: str = "http://api.tushare.pro") -> None:
         self._token = token
         self._timeout = timeout
@@ -394,9 +396,9 @@ class TushareFetcher(BaseFetcher):
         # Regular stocks
         # Shanghai: 600xxx, 601xxx, 603xxx, 688xxx (STAR Market)
         # Shenzhen: 000xxx, 002xxx, 300xxx (ChiNext)
-        if code.startswith(('600', '601', '603', '688')):
+        if code.startswith(('600', '601', '603', '605', '688')):
             return f"{code}.SH"
-        elif code.startswith(('000', '002', '300')):
+        elif code.startswith(('000', '001', '002', '003', '300')):
             return f"{code}.SZ"
         else:
             logger.warning(f"无法确定股票 {code} 的市场，默认使用深市")
@@ -1131,35 +1133,37 @@ class TushareFetcher(BaseFetcher):
             existing_cols = [col for col in keep_cols if col in df.columns]
             return df[existing_cols]
 
-        try:
-            ts_code = self._convert_stock_code(stock_code)
-            pro_bar = getattr(self._api, "pro_bar", None)
-            if callable(pro_bar):
-                df = pro_bar(
-                    ts_code=ts_code,
-                    start_date=start_date.replace('-', ''),
-                    end_date=end_date.replace('-', ''),
-                    asset='E',
-                    adj=adj,
-                    freq='D',
-                )
-                if df is not None and not df.empty:
-                    normalized = _normalize_adj_df(df)
-                    if 'adj_factor' not in normalized.columns:
-                        factor_df = self.get_adj_factor_data(stock_code=stock_code, start_date=start_date, end_date=end_date)
-                        if factor_df is not None and not factor_df.empty:
-                            factor_df = factor_df.copy()
-                            factor_df['trade_date'] = factor_df['trade_date'].astype(str)
-                            factor_df = factor_df.rename(columns={'trade_date': 'date'})
-                            factor_df['date'] = pd.to_datetime(factor_df['date'], format='%Y%m%d', errors='coerce')
-                            normalized = normalized.merge(
-                                factor_df[['date', 'adj_factor']],
-                                on='date',
-                                how='left',
-                            )
-                    return normalized
-        except Exception as e:
-            logger.warning(f"[Tushare] pro_bar 获取复权日线失败 {stock_code}: {e}")
+        supports_pro_bar = bool(getattr(self._api, "supports_pro_bar", False))
+        if supports_pro_bar:
+            try:
+                ts_code = self._convert_stock_code(stock_code)
+                pro_bar = getattr(self._api, "pro_bar", None)
+                if callable(pro_bar):
+                    df = pro_bar(
+                        ts_code=ts_code,
+                        start_date=start_date.replace('-', ''),
+                        end_date=end_date.replace('-', ''),
+                        asset='E',
+                        adj=adj,
+                        freq='D',
+                    )
+                    if df is not None and not df.empty:
+                        normalized = _normalize_adj_df(df)
+                        if 'adj_factor' not in normalized.columns:
+                            factor_df = self.get_adj_factor_data(stock_code=stock_code, start_date=start_date, end_date=end_date)
+                            if factor_df is not None and not factor_df.empty:
+                                factor_df = factor_df.copy()
+                                factor_df['trade_date'] = factor_df['trade_date'].astype(str)
+                                factor_df = factor_df.rename(columns={'trade_date': 'date'})
+                                factor_df['date'] = pd.to_datetime(factor_df['date'], format='%Y%m%d', errors='coerce')
+                                normalized = normalized.merge(
+                                    factor_df[['date', 'adj_factor']],
+                                    on='date',
+                                    how='left',
+                                )
+                        return normalized
+            except Exception as e:
+                logger.warning(f"[Tushare] pro_bar 获取复权日线失败 {stock_code}: {e}")
 
         try:
             raw_df = self._fetch_raw_data(stock_code, start_date, end_date)
