@@ -94,12 +94,12 @@ class TestPrefetchStockNames(unittest.TestCase):
     def test_get_stock_name_preserves_raw_exchange_hint_for_realtime_lookup(self):
         manager = DataFetcherManager.__new__(DataFetcherManager)
         manager._fetchers = []
-        manager.get_realtime_quote = MagicMock(return_value=SimpleNamespace(name="平安银行"))
+        manager.get_realtime_quote = MagicMock(return_value=SimpleNamespace(name="测试股票"))
 
-        name = DataFetcherManager.get_stock_name(manager, "000001.SZ")
+        name = DataFetcherManager.get_stock_name(manager, "123456.SZ")
 
-        self.assertEqual(name, "平安银行")
-        manager.get_realtime_quote.assert_called_once_with("000001.SZ", log_final_failure=False)
+        self.assertEqual(name, "测试股票")
+        manager.get_realtime_quote.assert_called_once_with("123456.SZ", log_final_failure=False)
 
     def test_fetch_and_save_stock_data_uses_lightweight_name_lookup(self):
         pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)

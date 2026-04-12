@@ -67,7 +67,6 @@ class MainScheduleModeTestCase(unittest.TestCase):
             "market_review": False,
             "schedule": False,
             "no_run_immediately": False,
-            "no_notify": False,
             "no_market_review": False,
             "dry_run": False,
             "workers": 1,
@@ -266,7 +265,11 @@ class MainScheduleModeTestCase(unittest.TestCase):
         self.assertEqual(call_order, ["reload_env", "reset_instance", "get_config"])
 
     def test_schedule_time_provider_propagates_config_read_failures(self) -> None:
-        with patch(
+        with patch.object(
+            main,
+            "_INITIAL_PROCESS_ENV",
+            {},
+        ), patch(
             "src.core.config_manager.ConfigManager.read_config_map",
             side_effect=RuntimeError("boom"),
         ):

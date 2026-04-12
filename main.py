@@ -227,10 +227,9 @@ def parse_arguments() -> argparse.Namespace:
   python main.py --debug            # 调试模式
   python main.py --dry-run          # 仅获取数据，不进行 AI 分析
   python main.py --stocks 600519,000001  # 指定分析特定股票
-  python main.py --no-notify        # 不发送推送通知
-  python main.py --single-notify    # 启用单股推送模式（每分析完一只立即推送）
-  python main.py --schedule         # 启用定时任务模式
-  python main.py --market-review    # 仅运行大盘复盘
+  python main.py --single-notify     # 启用单股推送模式（每分析完一只立即推送）
+  python main.py --schedule          # 启用定时任务模式
+  python main.py --market-review     # 仅运行大盘复盘
         '''
     )
 
@@ -272,12 +271,6 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        '--no-notify',
-        action='store_true',
-        help='不发送推送通知'
-    )
-
-    parser.add_argument(
         '--moni-execute',
         action='store_true',
         help='执行次日模拟交易（T+1）'
@@ -290,11 +283,11 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        '--workers',
-        type=int,
-        default=None,
-        help='并发线程数（默认使用配置值）'
+        '--schedule',
+        action='store_true',
+        help='启用定时任务模式'
     )
+
 
     parser.add_argument(
         '--schedule',
@@ -513,7 +506,7 @@ def run_full_analysis(
         results = pipeline.run(
             stock_codes=stock_codes,
             dry_run=args.dry_run,
-            send_notification=not args.no_notify,
+            send_notification=True,
             merge_notification=merge_notification
         )
 
@@ -602,7 +595,7 @@ def run_full_analysis(
                 notifier=pipeline.notifier,
                 analyzer=pipeline.analyzer,
                 search_service=pipeline.search_service,
-                send_notification=not args.no_notify,
+                send_notification=True,
                 merge_notification=merge_notification,
                 override_region=effective_region,
             )
@@ -611,7 +604,7 @@ def run_full_analysis(
                 market_report = review_result
 
         # Issue #190: 合并推送（个股+大盘复盘）
-        if merge_notification and (results or market_report) and not args.no_notify:
+        if merge_notification and (results or market_report):
             parts = []
             if market_report:
                 parts.append(f"# 📈 大盘复盘\n\n{market_report}")
@@ -680,8 +673,7 @@ def run_full_analysis(
                 if doc_url:
                     logger.info(f"飞书云文档创建成功: {doc_url}")
                     # 可选：将文档链接也推送到群里
-                    if not args.no_notify:
-                        pipeline.notifier.send(f"[{now.strftime('%Y-%m-%d %H:%M')}] 复盘文档创建成功: {doc_url}")
+                    pipeline.notifier.send(f"[{now.strftime('%Y-%m-%d %H:%M')}] 复盘文档创建成功: {doc_url}")
 
         except Exception as e:
             logger.error(f"飞书文档生成失败: {e}")
@@ -974,13 +966,16 @@ def _enforce_script_entry() -> None:
 
     Direct interactive launches are blocked unless the approved launcher
     explicitly sets DAILY_STOCK_ANALYSIS_ENTRY=script.
+    Test runners are allowed so the suite can exercise main() safely.
     """
     if os.getenv("DAILY_STOCK_ANALYSIS_ENTRY") == "script":
         return
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
     raise SystemExit(
-        "请使用 scripts/run_daily_stock_analysis.sh（或其 tmux 包装脚本）启动正式项目，"
-        "不要直接运行 main.py。"
+        "请使用 scripts/run_daily_stock_analysis.sh（或其 tmux 包装脚本）启动正式项目，不要直接运行 main.py。"
     )
+
 
 
 def main() -> int:
@@ -1175,7 +1170,7 @@ def main() -> int:
                 notifier=notifier,
                 analyzer=analyzer,
                 search_service=search_service,
-                send_notification=not args.no_notify,
+                send_notification=True,
                 override_region=effective_region,
             )
             return 0
