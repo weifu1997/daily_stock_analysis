@@ -49,6 +49,15 @@ from src.market_context import get_market_role, get_market_guidelines
 logger = logging.getLogger(__name__)
 
 
+def _is_gpt5_family_model(model: str) -> bool:
+    """Return True for gpt-5 family models that require temperature=1."""
+    normalized = (model or "").strip().lower()
+    if not normalized:
+        return False
+    short = normalized.rsplit("/", 1)[-1]
+    return short.startswith("gpt-5")
+
+
 class _LiteLLMStreamError(RuntimeError):
     """Internal error wrapper that records whether any text was streamed."""
 
@@ -167,47 +176,49 @@ def _derive_chip_health(profit_ratio: float, concentration_90: float, language: 
     """Derive chip_health from profit_ratio and concentration_90."""
     if profit_ratio >= 0.9:
         return localize_chip_health("警惕", language)
-    if concentration_90 >= 0.3:
+    if concentration_90 >= 0.25:
         return localize_chip_health("警惕", language)
-    if concentration_90 <= 0.12 and 0.35 <= profit_ratio < 0.85:
+    if concentration_90 <= 0.15 and profit_ratio >= 0.3:
         return localize_chip_health("健康", language)
-    if concentration_90 <= 0.2 and profit_ratio < 0.95:
-        return localize_chip_health("一般", language)
-    return localize_chip_health("警惕", language)
+    return localize_chip_health("一般", language)
 
 
 def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dict[str, Any]:
     """Build chip_structure dict from ChipDistribution or dict."""
     if hasattr(chip_data, "profit_ratio"):
         pr = _safe_float(chip_data.profit_ratio, default=0.0) or 0.0
-        ac = _safe_float(getattr(chip_data, "avg_cost", None), default=None)
+        raw_avg_cost = getattr(chip_data, "avg_cost", None)
+        ac = _safe_float(raw_avg_cost, default=None)
         c90 = _safe_float(getattr(chip_data, "concentration_90", None), default=0.0) or 0.0
         source = getattr(chip_data, "source", "estimated")
         confidence = _safe_float(getattr(chip_data, "confidence", None), default=None)
         method = getattr(chip_data, "method", "")
+        avg_cost_out: Any = raw_avg_cost if isinstance(raw_avg_cost, str) else (ac if ac not in (None, 0.0) else "N/A")
     else:
         d = chip_data if isinstance(chip_data, dict) else {}
         pr = _safe_float(d.get("profit_ratio"), default=0.0) or 0.0
-        ac = _safe_float(d.get("avg_cost"), default=None)
+        raw_avg_cost = d.get("avg_cost")
+        ac = _safe_float(raw_avg_cost, default=None)
         c90 = _safe_float(d.get("concentration_90", d.get("concentration")), default=0.0) or 0.0
         source = d.get("source", "estimated")
         confidence = _safe_float(d.get("confidence"), default=None)
         method = d.get("method", "")
+        avg_cost_out = raw_avg_cost if isinstance(raw_avg_cost, str) else (ac if ac not in (None, 0.0) else "N/A")
     chip_health = _derive_chip_health(pr, c90, language=language)
     return {
         "profit_ratio": f"{pr:.1%}",
-        "avg_cost": f"{ac:.4f}" if ac is not None else "N/A",
+        "avg_cost": avg_cost_out,
         "concentration": f"{c90:.2%}",
         "chip_health": chip_health,
         "source": source or "estimated",
-        "confidence": f"{confidence:.0%}" if confidence is not None else "N/A",
+        "confidence": confidence if confidence is not None else "N/A",
         "method": method or "truncated_gaussian",
     }
 
 
 def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> None:
     """When chip_data exists, fill chip_structure placeholder fields from chip_data (in-place)."""
-    if not result:
+    if not result or not chip_data:
         return
     try:
         if not result.dashboard:
@@ -217,67 +228,30 @@ def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> N
         dash["data_perspective"] = dp
         cs = dp.get("chip_structure") or {}
         merged = dict(cs)
-        if chip_data:
-            filled = _build_chip_structure_from_data(
-                chip_data,
-                language=getattr(result, "report_language", "zh"),
-            )
-            for k in _CHIP_KEYS:
-                if _is_value_placeholder(merged.get(k)):
-                    merged[k] = filled[k]
-            # Ensure chip structure is visible even when the model already returned a partially-filled object.
-            # We always refresh the canonical fields from the real chip data for the report layer.
-            for k in _CHIP_KEYS:
-                if not _is_value_placeholder(filled.get(k)):
-                    merged[k] = filled[k]
-            dp["chip_structure"] = merged
-            logger.info("[chip_structure] Filled chip fields from data source (Issue #589)")
-            record_chip_chain_event(
-                getattr(result, "stock_code", "-"),
-                "fill",
-                "ok",
-                source=merged.get("source", filled.get("source", "-")),
-                confidence=merged.get("confidence", filled.get("confidence")),
-                method=merged.get("method", filled.get("method", "")),
-                reason="filled_from_chip_data",
-            )
-        else:
-            fallback = {
-                "profit_ratio": "数据缺失",
-                "avg_cost": "数据缺失",
-                "concentration": "数据缺失",
-                "chip_health": "数据缺失，无法判断",
-                "source": "fallback_missing",
-                "confidence": "数据缺失",
-                "method": "fallback_placeholder",
-            }
-            changed = False
-            for k, v in fallback.items():
-                if _is_value_placeholder(merged.get(k)):
-                    merged[k] = v
-                    changed = True
-            if changed:
-                dp["chip_structure"] = merged
-                logger.info("[chip_structure] Filled missing chip fields with explicit fallback placeholders")
-            record_chip_chain_event(
-                getattr(result, "stock_code", "-"),
-                "fill",
-                "fallback",
-                source=merged.get("source", "fallback_missing"),
-                confidence=merged.get("confidence"),
-                method=merged.get("method", "fallback_placeholder"),
-                reason="chip_data_missing",
-            )
-
-        if merged.get("source") == "estimated":
-            merged["source"] = "estimated_ohlcv"
-        if merged.get("source") in ("fallback_missing", "数据缺失") and not chip_data:
-            merged["source"] = "fallback_missing"
+        filled = _build_chip_structure_from_data(
+            chip_data,
+            language=getattr(result, "report_language", "zh"),
+        )
+        for k in _CHIP_KEYS:
+            if _is_value_placeholder(merged.get(k)) and not _is_value_placeholder(filled.get(k)):
+                merged[k] = filled[k]
+        if merged.get("source") in (None, "", "N/A", "n/a", "NA", "na", "数据缺失"):
+            merged["source"] = filled.get("source", "estimated")
         if _is_value_placeholder(merged.get("method")):
-            merged["method"] = "truncated_gaussian"
+            merged["method"] = filled.get("method", "truncated_gaussian")
         if _is_value_placeholder(merged.get("confidence")):
-            merged["confidence"] = "数据缺失"
+            merged["confidence"] = filled.get("confidence", "N/A")
         dp["chip_structure"] = merged
+        logger.info("[chip_structure] Filled chip fields from data source (Issue #589)")
+        record_chip_chain_event(
+            getattr(result, "stock_code", "-"),
+            "fill",
+            "ok",
+            source=merged.get("source", filled.get("source", "-")),
+            confidence=merged.get("confidence", filled.get("confidence")),
+            method=merged.get("method", filled.get("method", "")),
+            reason="filled_from_chip_data",
+        )
     except Exception as e:
         logger.warning("[chip_structure] Fill failed, skipping: %s", e)
 
@@ -1286,6 +1260,8 @@ class GeminiAnalyzer:
             or 8192
         )
         temperature = generation_config.get('temperature', 0.7)
+        if _is_gpt5_family_model(config.litellm_model):
+            temperature = 1.0
 
         models_to_try = [config.litellm_model] + (config.litellm_fallback_models or [])
         models_to_try = [m for m in models_to_try if m]

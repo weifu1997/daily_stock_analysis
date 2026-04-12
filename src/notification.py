@@ -957,6 +957,7 @@ class NotificationService(
                             f"💡 *{vol_data.get('volume_meaning', '')}*",
                             "",
                         ])
+                    chip_data = data_persp.get('chip_structure', {})
                     # 筹码结构
                     if chip_data:
                         chip_health = localize_chip_health(chip_data.get('chip_health', 'N/A'), report_language)

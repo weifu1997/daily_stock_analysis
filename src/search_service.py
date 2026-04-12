@@ -341,7 +341,11 @@ class TavilySearchProvider(BaseSearchProvider):
                     snippet=item.get('content', '')[:500],  # 截取前500字
                     url=item.get('url', ''),
                     source=self._extract_domain(item.get('url', '')),
-                    published_date=item.get('published_date') or item.get('publishedDate'),
+                    published_date=(
+                        item.get('published_date')
+                        or item.get('publishedDate')
+                        or item.get('pubdate')
+                    ),
                 ))
             
             return SearchResponse(
@@ -1763,16 +1767,27 @@ class SearXNGSearchProvider(BaseSearchProvider):
                 url_val = item.get("url")
                 if not url_val:
                     continue
-                raw_published_date = item.get("publishedDate")
-
                 snippet = (item.get("content") or item.get("description") or "")[:500]
                 published_date = None
-                if raw_published_date:
+                for candidate in (
+                    item.get("published_date"),
+                    item.get("publishedDate"),
+                    item.get("pubdate"),
+                    item.get("datePublished"),
+                    item.get("date"),
+                    item.get("age"),
+                    item.get("page_age"),
+                ):
+                    if candidate:
+                        published_date = candidate
+                        break
+
+                if published_date:
                     try:
-                        dt = datetime.fromisoformat(raw_published_date.replace("Z", "+00:00"))
+                        dt = datetime.fromisoformat(str(published_date).replace("Z", "+00:00"))
                         published_date = dt.strftime("%Y-%m-%d")
                     except (ValueError, AttributeError):
-                        published_date = raw_published_date
+                        published_date = str(published_date)
 
                 results.append(
                     SearchResult(
@@ -2866,6 +2881,16 @@ class SearchService:
                     search_days=search_days,
                     max_results=provider_max_results,
                     log_scope=f"{stock_code}:{provider.name}:stock_news",
+                )
+                logger.info(
+                    "[新闻诊断] %s(%s): provider=%s raw=%s filtered=%s success=%s prefer_chinese=%s",
+                    stock_name,
+                    stock_code,
+                    provider.name,
+                    len(response.results),
+                    len(filtered_response.results),
+                    response.success,
+                    prefer_chinese,
                 )
                 had_provider_success = had_provider_success or bool(response.success)
 

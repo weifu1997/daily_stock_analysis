@@ -295,20 +295,20 @@ class MarketAnalyzer:
         
         logger.info("[大盘] 调用大模型生成复盘报告...")
         # Use the public generate_text() entry point — never access private analyzer attributes.
-        review = self.analyzer.generate_text(prompt, max_tokens=8192, temperature=0.7)
+        config = getattr(self, "config", None)
+        temperature = getattr(config, "llm_temperature", 0.7)
+        review = self.analyzer.generate_text(
+            prompt,
+            max_tokens=8192,
+            temperature=temperature,
+        )
 
         if review:
             logger.info("[大盘] 复盘报告生成成功，长度: %d 字符", len(review))
             # Inject structured data tables into LLM prose sections
             return self._inject_data_into_review(review, overview)
 
-        logger.warning("[大盘] 大模型返回为空，准备重试一次后再使用模板报告")
-        retry_review = self.analyzer.generate_text(prompt, max_tokens=8192, temperature=0.7)
-        if retry_review:
-            logger.info("[大盘] 复盘报告重试成功，长度: %d 字符", len(retry_review))
-            return self._inject_data_into_review(retry_review, overview)
-
-        logger.warning("[大盘] 大模型两次返回为空，使用模板报告")
+        logger.warning("[大盘] 大模型返回为空，使用模板报告")
         return self._generate_template_review(overview, news)
     
     def _inject_data_into_review(self, review: str, overview: MarketOverview) -> str:

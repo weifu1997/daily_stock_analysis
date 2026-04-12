@@ -255,6 +255,7 @@ class HistoryService:
         Convert an AnalysisHistory ORM record to a detail response dict.
         """
         raw_result = parse_json_field(record.raw_result)
+        context_snapshot = parse_json_field(getattr(record, "context_snapshot", None))
 
         model_used = (raw_result or {}).get("model_used") if isinstance(raw_result, dict) else None
         model_used = normalize_model_used(model_used)
@@ -264,7 +265,8 @@ class HistoryService:
         financial_summary = None
         financial_filter_summary = None
         if isinstance(raw_result, dict):
-            adj_structure = raw_result.get("dashboard", {}).get("data_perspective", {}).get("adj_structure", {})
+            dashboard = raw_result.get("dashboard") if isinstance(raw_result.get("dashboard"), dict) else {}
+            adj_structure = dashboard.get("data_perspective", {}).get("adj_structure", {}) if isinstance(dashboard, dict) else {}
             if not isinstance(adj_structure, dict) or not adj_structure:
                 adj_structure = None
             else:
@@ -552,7 +554,8 @@ class HistoryService:
         """
         try:
             from src.analyzer import AnalysisResult
-            adj_structure = dashboard.get("data_perspective", {}).get("adj_structure", {}) if dashboard else {}
+            dashboard = raw_result.get("dashboard") if isinstance(raw_result.get("dashboard"), dict) else {}
+            adj_structure = dashboard.get("data_perspective", {}).get("adj_structure", {}) if isinstance(dashboard, dict) else {}
             if isinstance(adj_structure, dict) and adj_structure:
                 latest_adj = adj_structure.get("latest_adj", {}) if isinstance(adj_structure.get("latest_adj", {}), dict) else {}
                 adj_structure = {

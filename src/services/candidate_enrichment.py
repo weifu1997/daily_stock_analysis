@@ -14,6 +14,61 @@ class CandidateEnrichmentService:
         self.search_adapter = search_adapter
         self.mx_client = mx_client
 
+    def _mx_enabled(self) -> bool:
+        return bool(self.mx_client and getattr(self.mx_client, "enabled", False))
+
+    def _fetch_signal(self, code: str, name: str = "") -> Optional[MxSignal]:
+        """Fetch a lightweight mx signal when the client is available."""
+        if not self._mx_enabled():
+            return None
+
+        if self.search_adapter is not None:
+            try:
+                signal = self.search_adapter.enrich_stock(code, name)
+                if signal is not None:
+                    return signal
+            except Exception as exc:
+                logger.warning("mx search_adapter.enrich_stock failed for %s: %s", code, exc, exc_info=True)
+
+        if self.mx_client is not None and hasattr(self.mx_client, "get_signal"):
+            try:
+                signal = self.mx_client.get_signal(code, name)
+                if signal is not None:
+                    return signal
+            except Exception as exc:
+                logger.warning("mx_client.get_signal failed for %s: %s", code, exc, exc_info=True)
+
+        return None
+
+    def _query_data_summary(self, code: str, name: str = "") -> Dict[str, Any]:
+        """Fetch a richer mx data summary if supported by the client."""
+        if not self._mx_enabled():
+            return {
+                "mx_data_enabled": False,
+                "mx_data_ok": False,
+                "mx_data_skipped": True,
+                "reason": "mx_disabled",
+            }
+
+        for method_name in ("get_data_summary", "get_stock_data_summary", "query_stock_data_summary"):
+            if self.mx_client is None or not hasattr(self.mx_client, method_name):
+                continue
+            try:
+                summary = getattr(self.mx_client, method_name)(code, name)
+                if isinstance(summary, dict):
+                    summary.setdefault("mx_data_enabled", True)
+                    summary.setdefault("mx_data_ok", True)
+                    return summary
+            except Exception as exc:
+                logger.warning("%s failed for %s: %s", method_name, code, exc, exc_info=True)
+
+        return {
+            "mx_data_enabled": True,
+            "mx_data_ok": False,
+            "mx_data_skipped": True,
+            "reason": "mx_data_summary_unavailable",
+        }
+
     def enrich_candidates(self, candidates: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """候选池阶段只补轻量信号，不做逐只 mx-data 摘要查询。"""
         enriched: List[Dict[str, Any]] = []
@@ -27,7 +82,7 @@ class CandidateEnrichmentService:
             enriched_item["mx_risk_flags"] = signal.risk_flags if signal else []
             enriched_item["mx_events"] = [ev.__dict__ for ev in (signal.events if signal else [])]
             enriched_item["mx_data_summary"] = {
-                "mx_data_enabled": bool(self.mx_client and getattr(self.mx_client, 'enabled', False)),
+                "mx_data_enabled": self._mx_enabled(),
                 "mx_data_skipped": True,
                 "reason": "candidate_pool_stage_skip",
             }
@@ -43,6 +98,7 @@ class CandidateEnrichmentService:
                 "mx_theme_tags": [],
                 "mx_risk_flags": [],
                 "mx_events": [],
+                "mx_data_summary": self._query_data_summary(code, name),
                 "financial_filter_summary": {"enabled": False},
             }
         mx_data_summary = self._query_data_summary(code, name)

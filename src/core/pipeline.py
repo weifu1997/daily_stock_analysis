@@ -1463,6 +1463,14 @@ class StockAnalysisPipeline:
                     )
                     mx_source = "mx_preselect"
                     fallback_used = False
+                else:
+                    mx_candidate_pool = list(normalized_original)
+                    for code in portfolio_pool:
+                        if code and code not in mx_candidate_pool:
+                            mx_candidate_pool.append(code)
+                    mx_reason = f"mx_xuangu empty result; keep original pool, seed={len(normalized_original)}"
+                    mx_source = "mx_empty_result"
+                    fallback_used = False
             except Exception as exc:
                 logger.warning("[pipeline] mx_xuangu preselect failed, fallback to original pool: %s", exc)
                 mx_candidate_pool = list(normalized_original)
@@ -1471,6 +1479,7 @@ class StockAnalysisPipeline:
                 fallback_used = True
 
         final_pool: List[str] = []
+
         for code in mx_candidate_pool + portfolio_pool:
             if code and code not in final_pool:
                 final_pool.append(code)
@@ -1493,6 +1502,8 @@ class StockAnalysisPipeline:
         return {
             "original_stock_codes": list(normalized_original),
             "mx_xuangu_pool": list(mx_candidate_pool),
+            "mx_candidate_pool": list(final_pool),
+            "mx_candidate_pool_raw": list(mx_candidate_pool),
             "portfolio_pool": list(portfolio_pool),
             "final_candidate_pool": list(final_pool),
             "mx_xuangu_enabled": mx_enabled,
