@@ -120,6 +120,12 @@ class TestTushareConvertStockCode(unittest.TestCase):
         self.assertEqual(fetcher._convert_stock_code("838163"), "838163.BJ")
         self.assertEqual(fetcher._convert_stock_code("430047"), "430047.BJ")
 
+    def test_shanghai_605_and_shenzhen_001_prefixes(self):
+        """新主板前缀不应再落入默认深市分支。"""
+        fetcher = TushareFetcher()
+        self.assertEqual(fetcher._convert_stock_code("605050"), "605050.SH")
+        self.assertEqual(fetcher._convert_stock_code("001696"), "001696.SZ")
+
 
 @unittest.skipIf(not _AKSHARE_IMPORTS_OK, f"akshare fetcher imports failed: {_AKSHARE_IMPORT_ERROR}")
 class TestAkshareToSinaTxSymbol(unittest.TestCase):

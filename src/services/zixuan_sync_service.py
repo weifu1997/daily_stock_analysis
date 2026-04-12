@@ -37,9 +37,23 @@ class ZixuanSyncResult:
 
     @property
     def summary(self) -> str:
+        delete_rate_limited = sum(
+            1 for info in (self.delete_fail_details or {}).values()
+            if info.get('last_error') == 'skipped_after_rate_limit'
+        )
+        delete_invalid = sum(
+            1 for info in (self.delete_fail_details or {}).values()
+            if info.get('last_error') == 'invalid_code'
+        )
+        extra = []
+        if delete_rate_limited:
+            extra.append(f"频控跳过 {delete_rate_limited}")
+        if delete_invalid:
+            extra.append(f"异常代码跳过 {delete_invalid}")
+        extra_suffix = f"（{'，'.join(extra)}）" if extra else ""
         return (
             f"zixuan同步：新增 {len(self.added)}，删除 {len(self.deleted)}，"
-            f"失败 {len(self.failed)}，跳过删除 {len(self.skipped)}"
+            f"失败 {len(self.failed)}，跳过删除 {len(self.skipped)}{extra_suffix}"
         )
 
     @property
@@ -50,14 +64,22 @@ class ZixuanSyncResult:
         skipped_preview = ", ".join(self.skipped[:10]) if self.skipped else "无"
         current_preview = ", ".join(self.current[:10]) if self.current else "无"
         target_preview = ", ".join(self.target[:10]) if self.target else "无"
-        detail_hint = ""
+        detail_parts = []
         if self.fail_details:
             sample_items = list(self.fail_details.items())[:3]
             sample_text = "; ".join(
                 f"{code}: variants={info.get('variants')} err={info.get('last_error')} result={info.get('last_result')}"
                 for code, info in sample_items
             )
-            detail_hint = f"；失败详情[{sample_text}]"
+            detail_parts.append(f"新增失败详情[{sample_text}]")
+        if self.delete_fail_details:
+            sample_items = list(self.delete_fail_details.items())[:3]
+            sample_text = "; ".join(
+                f"{code}: variants={info.get('variants')} err={info.get('last_error')} result={info.get('last_result')}"
+                for code, info in sample_items
+            )
+            detail_parts.append(f"删除失败详情[{sample_text}]")
+        detail_hint = f"；{'；'.join(detail_parts)}" if detail_parts else ""
         return (
             "zixuan同步明细："
             f"目标[{target_preview}]；"

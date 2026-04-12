@@ -31,18 +31,29 @@ export const JsonViewer: React.FC<JsonViewerProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const escapeHtml = (unsafe: string): string => {
+    return unsafe
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  };
+
   // 简单的语法高亮
   const highlightJson = (json: string): React.ReactNode => {
     return json.split('\n').map((line, index) => {
+      const escaped = escapeHtml(line);
+
       // 高亮 key
-      let highlighted = line.replace(
-        /"([^"]+)":/g,
-        '<span class="text-cyan-400">"$1"</span>:'
+      let highlighted = escaped.replace(
+        /&quot;([^&]*)&quot;:/g,
+        '<span class="text-cyan-400">&quot;$1&quot;</span>:'
       );
       // 高亮字符串值
       highlighted = highlighted.replace(
-        /: "([^"]*)"/g,
-        ': <span class="text-emerald-400">"$1"</span>'
+        /: &quot;([^&]*)&quot;/g,
+        ': <span class="text-emerald-400">&quot;$1&quot;</span>'
       );
       // 高亮数字
       highlighted = highlighted.replace(

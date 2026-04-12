@@ -288,13 +288,6 @@ def parse_arguments() -> argparse.Namespace:
         help='启用定时任务模式'
     )
 
-
-    parser.add_argument(
-        '--schedule',
-        action='store_true',
-        help='启用定时任务模式，每日定时执行'
-    )
-
     parser.add_argument(
         '--no-run-immediately',
         action='store_true',
@@ -355,6 +348,13 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         default='0.0.0.0',
         help='FastAPI 服务监听地址（默认 0.0.0.0）'
+    )
+
+    parser.add_argument(
+        '--workers',
+        type=int,
+        default=None,
+        help='并发线程数（默认使用配置值）'
     )
 
     parser.add_argument(
