@@ -179,6 +179,29 @@ class StockDailyAdj(Base):
         Index('ix_daily_adj_code_date', 'code', 'date'),
     )
 
+    def __repr__(self):
+        return (
+            f"<StockDailyAdj(code={self.code}, date={self.date}, adj={self.adj}, "
+            f"close={self.close})>"
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典。"""
+        return {
+            'code': self.code,
+            'date': self.date,
+            'open': self.open,
+            'high': self.high,
+            'low': self.low,
+            'close': self.close,
+            'volume': self.volume,
+            'amount': self.amount,
+            'pct_chg': self.pct_chg,
+            'adj': self.adj,
+            'adj_factor': self.adj_factor,
+            'data_source': self.data_source,
+        }
+
 
 class NewsIntel(Base):
     """

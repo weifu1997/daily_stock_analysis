@@ -15,7 +15,7 @@ from sqlalchemy.sql import func
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.config import Config
-from src.storage import DatabaseManager, StockDaily
+from src.storage import DatabaseManager, StockDaily, StockDailyAdj, AdjFactor
 
 class TestStorage(unittest.TestCase):
     
@@ -211,6 +211,109 @@ class TestStorage(unittest.TestCase):
         finally:
             temp_dir.cleanup()
             DatabaseManager.reset_instance()
+
+    def test_get_analysis_context_serializes_adj_daily_rows(self):
+        DatabaseManager.reset_instance()
+        db = DatabaseManager(db_url="sqlite:///:memory:")
+
+        daily_df = pd.DataFrame([
+            {
+                'date': date(2026, 4, 2),
+                'open': 10.0,
+                'high': 10.6,
+                'low': 9.9,
+                'close': 10.5,
+                'volume': 1200,
+                'amount': 12600,
+                'pct_chg': 2.4,
+                'ma5': 10.1,
+                'ma10': 9.9,
+                'ma20': 9.7,
+                'volume_ratio': 1.2,
+            },
+            {
+                'date': date(2026, 4, 1),
+                'open': 9.8,
+                'high': 10.1,
+                'low': 9.7,
+                'close': 10.0,
+                'volume': 1000,
+                'amount': 10000,
+                'pct_chg': 1.0,
+                'ma5': 9.8,
+                'ma10': 9.7,
+                'ma20': 9.6,
+                'volume_ratio': 1.0,
+            },
+        ])
+        adj_df = pd.DataFrame([
+            {
+                'date': date(2026, 4, 2),
+                'open': 10.1,
+                'high': 10.7,
+                'low': 10.0,
+                'close': 10.6,
+                'volume': 1200,
+                'amount': 12720,
+                'pct_chg': 2.5,
+                'adj_factor': 1.234,
+            },
+            {
+                'date': date(2026, 4, 1),
+                'open': 9.9,
+                'high': 10.2,
+                'low': 9.8,
+                'close': 10.1,
+                'volume': 1000,
+                'amount': 10100,
+                'pct_chg': 1.1,
+                'adj_factor': 1.200,
+            },
+        ])
+        factor_df = pd.DataFrame([
+            {'date': date(2026, 4, 2), 'adj_factor': 1.234},
+            {'date': date(2026, 4, 1), 'adj_factor': 1.200},
+        ])
+
+        db.save_daily_data(daily_df, code='600519', data_source='unit-test')
+        db.save_daily_adj_data(adj_df, code='600519', data_source='unit-test', adj='qfq')
+        db.save_adj_factor_data(factor_df, code='600519', data_source='unit-test')
+
+        context = db.get_analysis_context('600519')
+
+        self.assertIsNotNone(context)
+        self.assertEqual(context['adj_today']['adj_factor'], 1.234)
+        self.assertEqual(context['adj_today']['adj'], 'qfq')
+        self.assertEqual(context['adj_yesterday']['adj_factor'], 1.2)
+        self.assertEqual(context['adj_snapshot']['latest_adj']['close'], 10.6)
+        self.assertEqual(context['adj_snapshot']['latest_adj_factor'], 1.234)
+        self.assertEqual(context['adj_snapshot']['rows'], 2)
+
+        DatabaseManager.reset_instance()
+
+    def test_stock_daily_adj_to_dict_contains_adj_fields(self):
+        row = StockDailyAdj(
+            code='600519',
+            date=date(2026, 4, 2),
+            open=10.1,
+            high=10.7,
+            low=10.0,
+            close=10.6,
+            volume=1200,
+            amount=12720,
+            pct_chg=2.5,
+            adj='qfq',
+            adj_factor=1.234,
+            data_source='unit-test',
+        )
+
+        payload = row.to_dict()
+
+        self.assertEqual(payload['code'], '600519')
+        self.assertEqual(payload['date'], date(2026, 4, 2))
+        self.assertEqual(payload['adj'], 'qfq')
+        self.assertEqual(payload['adj_factor'], 1.234)
+        self.assertEqual(payload['data_source'], 'unit-test')
 
 if __name__ == '__main__':
     unittest.main()
