@@ -51,9 +51,7 @@ from typing import List, Tuple
 
 from data_provider.base import canonical_stock_code
 from src.services.mx_name_cache import cache_stock_name
-from src.services.zixuan_sync_service import ZixuanSyncService
 from src.services.moni_plan_service import save_plan
-from src.integrations.mx.zixuan_client import MxZixuanClient
 from src.integrations.mx.moni_client import MxMoniClient
 from src.webui_frontend import prepare_webui_frontend_assets
 from src.config import get_config, Config
@@ -552,26 +550,6 @@ def run_full_analysis(
         except Exception as exc:
             logger.warning('mx-moni 模拟仓读取失败: %s', exc, exc_info=True)
 
-        mx_apikey = (os.getenv('MX_APIKEY') or '').strip()
-        zixuan_sync_summary = ''
-        zixuan_sync_detail = ''
-        if mx_apikey:
-            try:
-                zixuan_client = MxZixuanClient(apikey=mx_apikey)
-                zixuan_service = ZixuanSyncService(client=zixuan_client, allow_delete=True, strict=False)
-                portfolio_codes = _resolve_portfolio_stock_codes()
-                sync_result = zixuan_service.sync(
-                    candidate_codes=stock_codes or [],
-                    portfolio_codes=portfolio_codes,
-                )
-                zixuan_sync_summary = sync_result.summary
-                zixuan_sync_detail = sync_result.diff_summary
-                logger.info(zixuan_sync_summary)
-                logger.info(zixuan_sync_detail)
-            except Exception as exc:
-                logger.warning('妙想自选同步失败（已降级，不影响主链）: %s', exc, exc_info=True)
-        else:
-            logger.warning('MX_APIKEY 未配置，跳过 zixuan 同步')
 
         # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
         analysis_delay = getattr(config, 'analysis_delay', 0)
@@ -612,8 +590,6 @@ def run_full_analysis(
                 dashboard_content = pipeline.notifier.generate_aggregate_report(
                     results,
                     getattr(config, 'report_type', 'simple'),
-                    zixuan_sync_summary=zixuan_sync_summary,
-                    zixuan_sync_detail=zixuan_sync_detail,
                 )
                 if moni_summary:
                     dashboard_content = dashboard_content + f"\n\n---\n\n## mx-moni模拟仓\n\n{moni_summary}"
@@ -663,8 +639,6 @@ def run_full_analysis(
                     dashboard_content = pipeline.notifier.generate_aggregate_report(
                         results,
                         getattr(config, 'report_type', 'simple'),
-                        zixuan_sync_summary=zixuan_sync_summary,
-                        zixuan_sync_detail=zixuan_sync_detail,
                     )
                     full_content += f"# 🚀 个股决策仪表盘\n\n{dashboard_content}"
 

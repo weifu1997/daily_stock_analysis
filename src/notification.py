@@ -224,8 +224,6 @@ class NotificationService(
         results: List[AnalysisResult],
         report_type: Any,
         report_date: Optional[str] = None,
-        zixuan_sync_summary: Optional[str] = None,
-        zixuan_sync_detail: Optional[str] = None,
     ) -> str:
         """Generate the aggregate report content used by merge/save/push paths."""
         normalized_type = self._normalize_report_type(report_type)
@@ -234,13 +232,6 @@ class NotificationService(
         else:
             report = self.generate_dashboard_report(results, report_date=report_date)
 
-        extra_blocks = []
-        if zixuan_sync_summary:
-            extra_blocks.append(f"## 妙想自选同步\n\n{zixuan_sync_summary}")
-        if zixuan_sync_detail:
-            extra_blocks.append(f"### 同步明细\n\n{zixuan_sync_detail}")
-        if extra_blocks:
-            report = report + "\n\n---\n\n" + "\n\n".join(extra_blocks)
         return report
 
     def _collect_models_used(self, results: List[AnalysisResult]) -> List[str]:

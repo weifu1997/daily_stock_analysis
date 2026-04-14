@@ -85,7 +85,6 @@
 
 - `src/integrations/mx/`
   - `client.py`：妙想主客户端
-  - `zixuan_client.py`：自选同步
   - `moni_client.py`：模拟仓执行/查询
   - `search_adapter.py`：搜索适配层
 
