@@ -513,6 +513,9 @@ class Config:
     # === 新闻与分析筛选配置 ===
     news_max_age_days: int = 3   # 新闻最大时效（天）
     news_strategy_profile: str = "short"  # 新闻窗口策略档位：ultra_short/short/medium/long
+    search_provider_priority: List[str] = field(default_factory=lambda: [
+        "searxng", "bocha", "tavily", "brave", "serpapi", "minimax",
+    ])  # 统一 provider 优先级，所有搜索入口共用
     bias_threshold: float = 5.0  # 乖离率阈值（%），超过此值提示不追高
 
     # === 妙想增强层配置 ===
@@ -1175,6 +1178,9 @@ class Config:
             news_max_age_days=parse_env_int(os.getenv('NEWS_MAX_AGE_DAYS'), 3, field_name='NEWS_MAX_AGE_DAYS', minimum=1),
             news_strategy_profile=cls._parse_news_strategy_profile(
                 os.getenv('NEWS_STRATEGY_PROFILE', 'short')
+            ),
+            search_provider_priority=cls._parse_provider_priority(
+                os.getenv('SEARCH_PROVIDER_PRIORITY', '')
             ),
             bias_threshold=parse_env_float(os.getenv('BIAS_THRESHOLD'), 5.0, field_name='BIAS_THRESHOLD', minimum=1.0),
             mx_enabled=parse_env_bool(
@@ -1869,6 +1875,27 @@ class Config:
                 value,
             )
         return normalized
+
+    _VALID_PROVIDER_NAMES = frozenset({
+        "searxng", "bocha", "tavily", "brave", "serpapi", "minimax",
+    })
+
+    @classmethod
+    def _parse_provider_priority(cls, value: Optional[str]) -> List[str]:
+        """Parse SEARCH_PROVIDER_PRIORITY (comma-separated), keep only valid names, append missing ones."""
+        raw = (value or "").strip()
+        if not raw:
+            return list(cls._VALID_PROVIDER_NAMES)
+        seen = []
+        for name in raw.split(","):
+            n = name.strip().lower()
+            if n in cls._VALID_PROVIDER_NAMES and n not in seen:
+                seen.append(n)
+        # Append any missing providers at the end (preserving original default order)
+        for fallback in cls._VALID_PROVIDER_NAMES:
+            if fallback not in seen:
+                seen.append(fallback)
+        return seen
 
     def get_effective_news_window_days(self) -> int:
         """Return effective news window days after profile + max-age merge."""

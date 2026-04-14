@@ -2062,6 +2062,16 @@ class SearchService:
         if not self._providers:
             logger.warning("未配置任何搜索能力，新闻搜索功能将不可用")
 
+        # ── 统一 provider 优先级排序（P0-1: 消除隐式漂移）──
+        self._provider_priority = list(getattr(cfg, "search_provider_priority", [])) or [
+            "searxng", "bocha", "tavily", "brave", "serpapi", "minimax",
+        ]
+        self._sort_providers_by_priority()
+        logger.info(
+            "搜索 provider 优先级: %s",
+            [getattr(p, "name", "?") for p in self._providers],
+        )
+
         # In-memory search result cache: {cache_key: (timestamp, SearchResponse)}
         self._cache: Dict[str, Tuple[float, 'SearchResponse']] = {}
         self._cache_lock = threading.RLock()
@@ -2076,6 +2086,28 @@ class SearchService:
             self.news_window_days,
         )
     
+    def _sort_providers_by_priority(self) -> None:
+        """Sort self._providers by the configured priority list."""
+        if not self._providers:
+            return
+        providers_by_name = {}
+        for p in self._providers:
+            name = str(getattr(p, "name", p.__class__.__name__)).lower()
+            providers_by_name[name] = p
+        ordered = []
+        seen = set()
+        for name in self._provider_priority:
+            provider = providers_by_name.get(name)
+            if provider is not None:
+                ordered.append(provider)
+                seen.add(id(provider))
+        # Append any providers not in the priority list (preserve insertion order)
+        for p in self._providers:
+            if id(p) not in seen:
+                ordered.append(p)
+                seen.add(id(p))
+        self._providers = ordered
+
     @staticmethod
     def _is_foreign_stock(stock_code: str) -> bool:
         """判断是否为港股或美股"""
@@ -2540,13 +2572,19 @@ class SearchService:
         return None
 
     @classmethod
-    def _normalize_news_publish_date(cls, value: Any) -> Optional[date]:
-        """Normalize provider date value into a date object."""
+    def _normalize_news_publish_date(cls, value: Any, now: Optional[datetime] = None) -> Optional[date]:
+        """Normalize provider date value into a date object.
+
+        Args:
+            value: Raw date value from provider.
+            now: Reference datetime for relative-time resolution.
+                 When None, uses datetime.now() (legacy fallback).
+        """
         if value is None:
             return None
         if isinstance(value, datetime):
             if value.tzinfo is not None:
-                local_tz = datetime.now().astimezone().tzinfo or timezone.utc
+                local_tz = now.astimezone().tzinfo if now else (datetime.now().astimezone().tzinfo or timezone.utc)
                 return value.astimezone(local_tz).date()
             return value.date()
         if isinstance(value, date):
@@ -2555,7 +2593,7 @@ class SearchService:
         text = str(value).strip()
         if not text:
             return None
-        now = datetime.now()
+        now = now or datetime.now()
         local_tz = now.astimezone().tzinfo or timezone.utc
 
         relative_date = cls._parse_relative_news_date(text, now)
@@ -2638,7 +2676,8 @@ class SearchService:
         if not response.success or not response.results:
             return response
 
-        today = datetime.now().date()
+        reference_now = datetime.now()
+        today = reference_now.date()
         earliest = today - timedelta(days=max(0, int(search_days) - 1))
         latest = today + timedelta(days=self.FUTURE_TOLERANCE_DAYS)
 
@@ -2648,7 +2687,7 @@ class SearchService:
         dropped_future = 0
 
         for item in response.results:
-            published = self._normalize_news_publish_date(item.published_date)
+            published = self._normalize_news_publish_date(item.published_date, now=reference_now)
             if published is None:
                 dropped_unknown += 1
                 continue
@@ -2704,9 +2743,10 @@ class SearchService:
         if not response.success or not response.results:
             return response
 
+        reference_now = datetime.now()
         normalized_results: List[SearchResult] = []
         for item in response.results[:max_results]:
-            normalized_date = self._normalize_news_publish_date(item.published_date)
+            normalized_date = self._normalize_news_publish_date(item.published_date, now=reference_now)
             normalized_results.append(
                 SearchResult(
                     title=item.title,
@@ -2727,6 +2767,42 @@ class SearchService:
             error_message=response.error_message,
             search_time=response.search_time,
         )
+
+    @staticmethod
+    def _dedup_results(results: List[SearchResult]) -> List[SearchResult]:
+        """Deduplicate results by URL first, then by (title_normalized, url). Keeps first occurrence."""
+        seen_urls: set = set()
+        seen_titles: set = set()
+        deduped: List[SearchResult] = []
+        for r in results:
+            url_key = r.url
+            title_key = (r.title.lower().strip()[:80], r.source)
+            if url_key in seen_urls or title_key in seen_titles:
+                continue
+            seen_urls.add(url_key)
+            seen_titles.add(title_key)
+            deduped.append(r)
+        return deduped
+
+    @staticmethod
+    def _sort_results(results: List[SearchResult]) -> List[SearchResult]:
+        """Sort results by published_date descending (newest first). No-date items last."""
+        def _sort_key(r: SearchResult):
+            d = r.published_date or ""
+            if d:
+                # ISO date strings sort lexicographically same as chronologically
+                # Use negated string for descending: pad and negate
+                return (0, d)
+            return (1, "")
+        # Ascending sort with (0, date) before (1, "") and ISO strings naturally ascending
+        # For descending dates: reverse the secondary key by negating chars
+        def _sort_key_desc(r: SearchResult):
+            d = r.published_date or ""
+            if d:
+                # Invert each char for descending lexicographic sort
+                return (0, "".join(chr(255 - ord(c)) for c in d))
+            return (1, "")
+        return sorted(results, key=_sort_key_desc)
 
     @staticmethod
     def _limit_search_response(
@@ -2792,52 +2868,37 @@ class SearchService:
     ) -> SearchResponse:
         """Apply per-dimension freshness/normalization policy in one place."""
         if strict_freshness:
-            return self._filter_news_response(
+            filtered = self._filter_news_response(
                 response,
                 search_days=search_days,
                 max_results=max_results,
                 log_scope=log_scope,
             )
-        return self._normalize_and_limit_response(
-            response,
-            max_results=max_results,
-        )
+        else:
+            filtered = self._normalize_and_limit_response(
+                response,
+                max_results=max_results,
+            )
+        # P0-2/P0-3: 去重 + 排序
+        if filtered.results:
+            deduped = self._dedup_results(filtered.results)
+            sorted_results = self._sort_results(deduped)
+            return SearchResponse(
+                query=filtered.query,
+                results=sorted_results,
+                provider=filtered.provider,
+                success=filtered.success,
+                error_message=filtered.error_message,
+                search_time=filtered.search_time,
+            )
+        return filtered
 
     def _fallback_providers_for_comprehensive_intel(self) -> List[Any]:
-        """Preserve the historical fallback priority for comprehensive intel."""
-        available = [provider for provider in self._providers if provider and getattr(provider, "is_available", False)]
-        if not available:
-            return []
+        """Return available providers sorted by configured priority."""
+        return [p for p in self._providers if p and getattr(p, "is_available", False)]
 
-        explicit_order = ["searxng", "tavily", "brave", "serpapi", "bocha", "minimax"]
-        providers_by_name = {
-            str(getattr(provider, "name", provider.__class__.__name__)).lower(): provider
-            for provider in available
-        }
-
-        ordered: List[Any] = []
-        seen: set[int] = set()
-        for name in explicit_order:
-            provider = providers_by_name.get(name)
-            if provider is None:
-                continue
-            provider_id = id(provider)
-            if provider_id in seen:
-                continue
-            ordered.append(provider)
-            seen.add(provider_id)
-
-        for provider in available:
-            provider_id = id(provider)
-            if provider_id in seen:
-                continue
-            ordered.append(provider)
-            seen.add(provider_id)
-
-        return ordered
-
-    @staticmethod
     def _provider_search_response(
+        self,
         provider: Any,
         query: str,
         *,
@@ -3019,14 +3080,35 @@ class SearchService:
                 topic="news",
             )
             if mx_response.success and mx_response.results and len(mx_response.results) >= self.mx_search_min_results:
-                limited_mx_response = self._limit_search_response(mx_response, max_results=max_results)
+                # P0-2/P0-3: 去重 + 排序 + 截断
+                mx_deduped = self._dedup_results(mx_response.results)
+                mx_sorted = self._sort_results(mx_deduped)
+                mx_clean = SearchResponse(
+                    query=mx_response.query,
+                    results=mx_sorted,
+                    provider=mx_response.provider,
+                    success=mx_response.success,
+                    error_message=mx_response.error_message,
+                    search_time=mx_response.search_time,
+                )
+                limited_mx_response = self._limit_search_response(mx_clean, max_results=max_results)
                 self._put_cache(
                     self._cache_key(f"mx:{query}|news_pref={'zh' if prefer_chinese else 'default'}", max_results, search_days),
                     limited_mx_response,
                 )
                 return limited_mx_response
             if mx_response.success and mx_response.results and not self.mx_search_fallback_enabled:
-                return self._limit_search_response(mx_response, max_results=max_results)
+                mx_deduped = self._dedup_results(mx_response.results)
+                mx_sorted = self._sort_results(mx_deduped)
+                mx_clean = SearchResponse(
+                    query=mx_response.query,
+                    results=mx_sorted,
+                    provider=mx_response.provider,
+                    success=mx_response.success,
+                    error_message=mx_response.error_message,
+                    search_time=mx_response.search_time,
+                )
+                return self._limit_search_response(mx_clean, max_results=max_results)
 
         cache_key = self._cache_key(
             f"{query}|news_pref={'zh' if prefer_chinese else 'default'}",
@@ -3087,6 +3169,17 @@ class SearchService:
                     prioritized_response, preferred_count = self._prioritize_news_language(
                         filtered_response,
                         prefer_chinese=prefer_chinese,
+                    )
+                    # P0-2/P0-3: 去重 + 排序，再截断
+                    deduped = self._dedup_results(prioritized_response.results)
+                    sorted_results = self._sort_results(deduped)
+                    prioritized_response = SearchResponse(
+                        query=prioritized_response.query,
+                        results=sorted_results,
+                        provider=prioritized_response.provider,
+                        success=prioritized_response.success,
+                        error_message=prioritized_response.error_message,
+                        search_time=prioritized_response.search_time,
                     )
                     limited_response = self._limit_search_response(
                         prioritized_response,
@@ -3210,15 +3303,10 @@ class SearchService:
         if mx_response.success and mx_response.results and not self.mx_search_fallback_enabled:
             return mx_response
         
-        primary_fallback_priority = ["searxng", "tavily"]
-        secondary_fallback_priority = ["brave", "serpapi", "bocha", "minimax"]
-        provider_map = {p.name.lower(): p for p in self._providers if p.is_available}
-
+        # 使用统一排序后的 provider 列表（P0-1: 消除硬编码漂移）
         fallback_response = None
-        fallback_chain = primary_fallback_priority + secondary_fallback_priority
-        for provider_name in fallback_chain:
-            provider = provider_map.get(provider_name)
-            if not provider:
+        for provider in self._providers:
+            if not provider or not getattr(provider, "is_available", False):
                 continue
 
             logger.info(f"[事件搜索] 使用 {provider.name}")

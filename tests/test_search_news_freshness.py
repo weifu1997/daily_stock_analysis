@@ -393,12 +393,13 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             self.assertEqual(kwargs["max_results"], 6)  # target 3 -> overfetch 6
 
         self.assertEqual([item.title for item in intel["latest_news"].results], ["fresh"])
+        # P0-3: _sort_results puts dated items first (newest first), unknown-date last
         self.assertEqual(
             [item.title for item in intel["market_analysis"].results],
-            ["analysis_unknown", "analysis_dated"],
+            ["analysis_dated", "analysis_unknown"],
         )
-        self.assertIsNone(intel["market_analysis"].results[0].published_date)
-        self.assertEqual(intel["market_analysis"].results[1].published_date, expected_analysis_date)
+        self.assertEqual(intel["market_analysis"].results[0].published_date, expected_analysis_date)
+        self.assertIsNone(intel["market_analysis"].results[1].published_date)
 
     def test_search_comprehensive_intel_etf_risk_check_keeps_unknown_dates(self) -> None:
         """ETF risk_check should avoid strict freshness filtering."""

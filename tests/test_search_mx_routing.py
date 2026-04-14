@@ -351,10 +351,11 @@ class TestMxSearchRouting(unittest.TestCase):
         with patch("src.search_service.time.sleep"):
             intel = service.search_comprehensive_intel("600519", "贵州茅台", max_searches=1)
 
-        self.assertEqual(calls, ["Brave"])
+        # P0-1: 统一 provider 顺序后，fallback 遍历 self._providers = [bocha, brave, serpapi]
+        # bocha (success=False) 先被调用，然后 brave (success=True) 命中
+        self.assertEqual(calls, ["Bocha", "Brave"])
         self.assertEqual([item.title for item in intel["latest_news"].results], ["Brave-result"])
         serpapi.search.assert_not_called()
-        bocha.search.assert_not_called()
 
 
 if __name__ == "__main__":

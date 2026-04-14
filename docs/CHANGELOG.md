@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] 搜索 provider 优先级统一收口为可配置的 `search_provider_priority`（环境变量 `SEARCH_PROVIDER_PRIORITY`），消除三个搜索入口各自的隐式 provider 遍历顺序漂移。
+- [改进] 搜索结果新增去重（按 URL + 标题/来源）和排序（按日期降序、无日期排末尾），减少重复新闻污染 prompt。
+- [改进] `_normalize_news_publish_date` 支持注入 `now` 参数，同一分析 run 内时间基准一致。
 - [修复] `AGENT_MAX_STEPS` 在 orchestrator 多 Agent 模式下改为作为各子 Agent 的步数上限而非硬覆盖；TechnicalAgent 等高默认值 Agent 会被封顶，低默认值 Agent 保持原值，减少不必要的 LLM 调用膨胀与配额消耗。
 - [修复] 移除不稳定的 `mx-zixuan` 正式链路与报告拼接逻辑，主流程不再依赖妙想自选同步结果，避免外部接口超时拖慢或干扰正式运行。
 - [修复] **MiniMax-M2.7 模型连接测试支持** — 修复 LLM 通道连接测试在 MiniMax-M2.7 模型下返回 "Empty response" 的问题；增加了 `max_tokens` 上限（8→256）以容纳 MiniMax 思考过程，并添加 `content_blocks` 格式解析逻辑统一处理 MiniMax 响应格式差异。
