@@ -341,11 +341,7 @@ class TavilySearchProvider(BaseSearchProvider):
                     snippet=item.get('content', '')[:500],  # 截取前500字
                     url=item.get('url', ''),
                     source=self._extract_domain(item.get('url', '')),
-                    published_date=(
-                        item.get('published_date')
-                        or item.get('publishedDate')
-                        or item.get('pubdate')
-                    ),
+                    published_date=SearchService.extract_date_value(item),  # 统一日期字段提取
                 ))
             
             return SearchResponse(
@@ -646,7 +642,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
                     snippet=snippet[:1000], # 限制总长度
                     url=link,
                     source=item.get('source', self._extract_domain(link)),
-                    published_date=item.get('date'),
+                    published_date=SearchService.extract_date_value(item),
                 ))
 
             return SearchResponse(
@@ -1010,7 +1006,7 @@ class BochaSearchProvider(BaseSearchProvider):
                     snippet=snippet,
                     url=item.get('url', ''),
                     source=item.get('siteName') or self._extract_domain(item.get('url', '')),
-                    published_date=item.get('datePublished'),  # UTC+8格式，无需转换
+                    published_date=SearchService.extract_date_value(item),  # 统一日期字段提取
                 ))
             
             logger.info(f"[Bocha] 成功解析 {len(results)} 条结果")
@@ -1223,7 +1219,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
             # Parse organic results
             results: List[SearchResult] = []
             for item in data.get('organic', []):
-                date_val = item.get('date')
+                date_val = SearchService.extract_date_value(item)  # 统一日期字段提取
 
                 # Client-side time filtering
                 if not self._is_within_days(date_val, days):
@@ -1397,23 +1393,12 @@ class BraveSearchProvider(BaseSearchProvider):
             web_results = web_data.get('results', [])
 
             for item in web_results[:max_results]:
-                # 解析发布日期（ISO 8601 格式）
-                published_date = None
-                age = item.get('age') or item.get('page_age')
-                if age:
-                    try:
-                        # 转换 ISO 格式为简单日期字符串
-                        dt = datetime.fromisoformat(age.replace('Z', '+00:00'))
-                        published_date = dt.strftime('%Y-%m-%d')
-                    except (ValueError, AttributeError):
-                        published_date = age  # 解析失败时使用原始值
-
                 results.append(SearchResult(
                     title=item.get('title', ''),
                     snippet=item.get('description', '')[:500],  # 截取到500字符
                     url=item.get('url', ''),
                     source=self._extract_domain(item.get('url', '')),
-                    published_date=published_date
+                    published_date=SearchService.extract_date_value(item),  # 统一日期字段提取
                 ))
 
             logger.info(f"[Brave] 成功解析 {len(results)} 条结果")
@@ -1768,26 +1753,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
                 if not url_val:
                     continue
                 snippet = (item.get("content") or item.get("description") or "")[:500]
-                published_date = None
-                for candidate in (
-                    item.get("published_date"),
-                    item.get("publishedDate"),
-                    item.get("pubdate"),
-                    item.get("datePublished"),
-                    item.get("date"),
-                    item.get("age"),
-                    item.get("page_age"),
-                ):
-                    if candidate:
-                        published_date = candidate
-                        break
-
-                if published_date:
-                    try:
-                        dt = datetime.fromisoformat(str(published_date).replace("Z", "+00:00"))
-                        published_date = dt.strftime("%Y-%m-%d")
-                    except (ValueError, AttributeError):
-                        published_date = str(published_date)
+                published_date = SearchService.extract_date_value(item)  # 统一日期字段提取
 
                 results.append(
                     SearchResult(
@@ -2580,33 +2546,64 @@ class SearchService:
             now: Reference datetime for relative-time resolution.
                  When None, uses datetime.now() (legacy fallback).
         """
+        result, _ = cls._normalize_news_publish_date_with_reason(value, now=now)
+        return result
+
+    # Date field candidates in priority order (superset of all providers)
+    _DATE_FIELD_CANDIDATES = (
+        "published_date", "publishedDate", "pubdate",
+        "datePublished", "date", "age", "page_age",
+    )
+
+    @classmethod
+    def extract_date_value(cls, item: dict) -> Any:
+        """Extract the first non-empty date value from a provider result dict.
+
+        Tries all known date field names in priority order.
+        Returns the raw value (str/datetime/None) without parsing.
+        """
+        for field in cls._DATE_FIELD_CANDIDATES:
+            val = item.get(field)
+            if val is not None and str(val).strip():
+                return val
+        return None
+
+    @classmethod
+    def _normalize_news_publish_date_with_reason(
+        cls, value: Any, now: Optional[datetime] = None
+    ) -> Tuple[Optional[date], str]:
+        """Normalize date value and return (date, reason).
+
+        Returns:
+            (date_obj, "ok") on success
+            (None, "no_field") when value is None/empty
+            (None, "parse_failed") when value exists but could not be parsed
+        """
         if value is None:
-            return None
+            return None, "no_field"
         if isinstance(value, datetime):
             if value.tzinfo is not None:
                 local_tz = now.astimezone().tzinfo if now else (datetime.now().astimezone().tzinfo or timezone.utc)
-                return value.astimezone(local_tz).date()
-            return value.date()
+                return value.astimezone(local_tz).date(), "ok"
+            return value.date(), "ok"
         if isinstance(value, date):
-            return value
+            return value, "ok"
 
         text = str(value).strip()
         if not text:
-            return None
+            return None, "no_field"
         now = now or datetime.now()
         local_tz = now.astimezone().tzinfo or timezone.utc
 
         relative_date = cls._parse_relative_news_date(text, now)
         if relative_date:
-            return relative_date
+            return relative_date, "ok"
 
         # Unix timestamp fallback
         if text.isdigit() and len(text) in (10, 13):
             try:
                 ts = int(text[:10]) if len(text) == 13 else int(text)
-                # Provider timestamps are typically UTC epoch seconds.
-                # Normalize to local date to keep window checks aligned with local "today".
-                return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(local_tz).date()
+                return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(local_tz).date(), "ok"
             except (OSError, OverflowError, ValueError):
                 pass
 
@@ -2614,8 +2611,8 @@ class SearchService:
         try:
             parsed_iso = datetime.fromisoformat(iso_candidate)
             if parsed_iso.tzinfo is not None:
-                return parsed_iso.astimezone(local_tz).date()
-            return parsed_iso.date()
+                return parsed_iso.astimezone(local_tz).date(), "ok"
+            return parsed_iso.date(), "ok"
         except ValueError:
             pass
 
@@ -2625,15 +2622,15 @@ class SearchService:
             parsed_rfc = parsedate_to_datetime(normalized)
             if parsed_rfc:
                 if parsed_rfc.tzinfo is not None:
-                    return parsed_rfc.astimezone(local_tz).date()
-                return parsed_rfc.date()
+                    return parsed_rfc.astimezone(local_tz).date(), "ok"
+                return parsed_rfc.date(), "ok"
         except (TypeError, ValueError):
             pass
 
         zh_match = re.search(r"(\d{4})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?", text)
         if zh_match:
             try:
-                return date(int(zh_match.group(1)), int(zh_match.group(2)), int(zh_match.group(3)))
+                return date(int(zh_match.group(1)), int(zh_match.group(2)), int(zh_match.group(3))), "ok"
             except ValueError:
                 pass
 
@@ -2657,12 +2654,12 @@ class SearchService:
             try:
                 parsed_dt = datetime.strptime(normalized, fmt)
                 if parsed_dt.tzinfo is not None:
-                    return parsed_dt.astimezone(local_tz).date()
-                return parsed_dt.date()
+                    return parsed_dt.astimezone(local_tz).date(), "ok"
+                return parsed_dt.date(), "ok"
             except ValueError:
                 continue
 
-        return None
+        return None, "parse_failed"
 
     def _filter_news_response(
         self,
@@ -2682,14 +2679,18 @@ class SearchService:
         latest = today + timedelta(days=self.FUTURE_TOLERANCE_DAYS)
 
         filtered: List[SearchResult] = []
-        dropped_unknown = 0
+        dropped_no_field = 0
+        dropped_parse_failed = 0
         dropped_old = 0
         dropped_future = 0
 
         for item in response.results:
-            published = self._normalize_news_publish_date(item.published_date, now=reference_now)
+            published, reason = self._normalize_news_publish_date_with_reason(item.published_date, now=reference_now)
             if published is None:
-                dropped_unknown += 1
+                if reason == "no_field":
+                    dropped_no_field += 1
+                else:
+                    dropped_parse_failed += 1
                 continue
             if published < earliest:
                 dropped_old += 1
@@ -2710,14 +2711,16 @@ class SearchService:
             if len(filtered) >= max_results:
                 break
 
-        if dropped_unknown or dropped_old or dropped_future:
+        total_dropped = dropped_no_field + dropped_parse_failed + dropped_old + dropped_future
+        if total_dropped:
             logger.info(
-                "[新闻过滤] %s: provider=%s, total=%s, kept=%s, drop_unknown=%s, drop_old=%s, drop_future=%s, window=[%s,%s]",
+                "[新闻过滤] %s: provider=%s, total=%s, kept=%s, drop_no_field=%s, drop_parse_failed=%s, drop_old=%s, drop_future=%s, window=[%s,%s]",
                 log_scope,
                 response.provider,
                 len(response.results),
                 len(filtered),
-                dropped_unknown,
+                dropped_no_field,
+                dropped_parse_failed,
                 dropped_old,
                 dropped_future,
                 earliest.isoformat(),

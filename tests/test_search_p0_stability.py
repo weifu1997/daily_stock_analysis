@@ -337,5 +337,143 @@ class TestFallbackStop(unittest.TestCase):
         p2.search.assert_not_called()
 
 
+# ──────────────────────── P1-1: extract_date_value ────────────────────────
+
+
+class TestExtractDateValue(unittest.TestCase):
+    """P1-1: extract_date_value 必须统一从各种字段名提取日期。"""
+
+    def test_published_date(self):
+        val = SearchService.extract_date_value({"published_date": "2026-04-14"})
+        self.assertEqual(val, "2026-04-14")
+
+    def test_publishedDate(self):
+        val = SearchService.extract_date_value({"publishedDate": "2026-04-14"})
+        self.assertEqual(val, "2026-04-14")
+
+    def test_pubdate(self):
+        val = SearchService.extract_date_value({"pubdate": "2026-04-14"})
+        self.assertEqual(val, "2026-04-14")
+
+    def test_datePublished(self):
+        val = SearchService.extract_date_value({"datePublished": "2026-04-14"})
+        self.assertEqual(val, "2026-04-14")
+
+    def test_date(self):
+        val = SearchService.extract_date_value({"date": "2026-04-14"})
+        self.assertEqual(val, "2026-04-14")
+
+    def test_age(self):
+        val = SearchService.extract_date_value({"age": "2026-04-14T10:00:00Z"})
+        self.assertEqual(val, "2026-04-14T10:00:00Z")
+
+    def test_page_age(self):
+        val = SearchService.extract_date_value({"page_age": "2026-04-14"})
+        self.assertEqual(val, "2026-04-14")
+
+    def test_no_date_fields(self):
+        val = SearchService.extract_date_value({"title": "hello"})
+        self.assertIsNone(val)
+
+    def test_empty_dict(self):
+        val = SearchService.extract_date_value({})
+        self.assertIsNone(val)
+
+    def test_published_date_takes_precedence(self):
+        """published_date 优先于 date。"""
+        val = SearchService.extract_date_value({
+            "published_date": "2026-04-14",
+            "date": "2026-04-10",
+        })
+        self.assertEqual(val, "2026-04-14")
+
+
+# ──────────────────────── P1-2/P1-3: 过滤日志 reason code ────────────────────────
+
+
+class TestNormalizeReasonCode(unittest.TestCase):
+    """P1-2: _normalize_news_publish_date_with_reason 必须区分 no_field 和 parse_failed。"""
+
+    def test_none_returns_no_field(self):
+        _, reason = SearchService._normalize_news_publish_date_with_reason(None)
+        self.assertEqual(reason, "no_field")
+
+    def test_empty_string_returns_no_field(self):
+        _, reason = SearchService._normalize_news_publish_date_with_reason("")
+        self.assertEqual(reason, "no_field")
+
+    def test_whitespace_returns_no_field(self):
+        _, reason = SearchService._normalize_news_publish_date_with_reason("   ")
+        self.assertEqual(reason, "no_field")
+
+    def test_garbage_returns_parse_failed(self):
+        _, reason = SearchService._normalize_news_publish_date_with_reason("not a date xyz")
+        self.assertEqual(reason, "parse_failed")
+
+    def test_valid_date_returns_ok(self):
+        d, reason = SearchService._normalize_news_publish_date_with_reason("2026-04-14")
+        self.assertEqual(reason, "ok")
+        self.assertEqual(d, date(2026, 4, 14))
+
+    def test_iso_returns_ok(self):
+        d, reason = SearchService._normalize_news_publish_date_with_reason("2026-04-14T10:30:00Z")
+        self.assertEqual(reason, "ok")
+        self.assertEqual(d, date(2026, 4, 14))
+
+
+# ──────────────────────── P1-4: fallback 停止条件 ────────────────────────
+
+
+class TestFallbackStopCondition(unittest.TestCase):
+    """P1-4: 非中文场景，第一个 provider 有结果就停止。"""
+
+    def test_non_chinese_stops_on_first_success(self):
+        """prefer_chinese=False 时，第一个 provider 有结果就 return，不继续调用后续 provider。"""
+        svc = SearchService.__new__(SearchService)
+        svc.FUTURE_TOLERANCE_DAYS = 1
+        svc.NEWS_OVERSAMPLE_FACTOR = 2
+        svc.NEWS_OVERSAMPLE_MAX = 10
+        svc.news_max_age_days = 3
+        svc.news_strategy_profile = "short"
+        svc.news_window_days = 3
+        svc.news_profile_days = 3
+        svc._cache = {}
+        svc._cache_ttl = 600
+        svc._cache_lock = __import__("threading").RLock()
+        svc._cache_inflight = {}
+        svc.mx_enabled = False
+        svc.mx_search_primary_provider = "legacy"
+
+        p1 = MagicMock(spec=BaseSearchProvider)
+        p1.name = "First"
+        p1.is_available = True
+        p1.search.return_value = SearchResponse(
+            query="test",
+            results=[_result("r1", "2026-04-14")],
+            provider="First",
+            success=True,
+        )
+
+        p2 = MagicMock(spec=BaseSearchProvider)
+        p2.name = "Second"
+        p2.is_available = True
+        p2.search.return_value = SearchResponse(
+            query="test",
+            results=[_result("r2", "2026-04-14")],
+            provider="Second",
+            success=True,
+        )
+
+        svc._providers = [p1, p2]
+
+        # Mock _should_prefer_chinese_news to return False
+        with patch.object(SearchService, "_should_prefer_chinese_news", return_value=False):
+            result = svc.search_stock_news("AAPL", "Apple", max_results=5)
+
+        p1.search.assert_called_once()
+        p2.search.assert_not_called()
+        self.assertEqual(result.provider, "First")
+
+
 if __name__ == "__main__":
     unittest.main()
