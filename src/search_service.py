@@ -2037,6 +2037,9 @@ class SearchService:
         self.mx_search_fallback_enabled = bool(getattr(cfg, "mx_search_fallback_enabled", True))
         self.mx_search_min_results = max(1, int(getattr(cfg, "mx_search_min_results", 3) or 3))
         self.mx_search_route_timeout_seconds = max(0.1, float(getattr(cfg, "mx_search_route_timeout_seconds", 7.5) or 7.5))
+        self.mx_search_circuit_cooldown_seconds = max(0, int(getattr(cfg, "circuit_breaker_cooldown", 300) or 300))
+        self._mx_circuit_open_until: float = 0.0
+        self._mx_circuit_reason: str = ""
         self.mx_client = MxClient(
             timeout=min(float(getattr(cfg, "mx_timeout_seconds", 8.0) or 8.0), self.mx_search_route_timeout_seconds)
         )
@@ -2492,6 +2495,23 @@ class SearchService:
         if self.mx_search_primary_provider != "mx" or not self.mx_enabled:
             return SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message="mx_route_disabled")
 
+        with self._cache_lock:
+            if self._mx_circuit_open_until and time.time() < self._mx_circuit_open_until:
+                response = SearchResponse(
+                    query=query,
+                    results=[],
+                    provider="mx-search",
+                    success=False,
+                    error_message="mx_circuit_open",
+                )
+                setattr(response, "extra", {
+                    "route_label": route_label,
+                    "route_status": "circuit_open",
+                    "circuit_reason": self._mx_circuit_reason,
+                    "circuit_open_until": self._mx_circuit_open_until,
+                })
+                return response
+
         if not self._is_financial_query(query, stock_code=stock_code, stock_name=stock_name):
             logger.info("[mx-search] 非金融 query 直接走兜底: label=%s query='%s'", route_label, query)
             return SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message="non_financial_query")
@@ -2502,12 +2522,18 @@ class SearchService:
         try:
             resp = future.result(timeout=self.mx_search_route_timeout_seconds)
         except FuturesTimeoutError:
-            logger.warning("[mx-search] 调用超时触发 fallback: label=%s query='%s' timeout=%.1fs", route_label, query, self.mx_search_route_timeout_seconds)
+            logger.info("[mx-search] 路由熔断: label=%s query='%s' reason=timeout cooldown=%ss", route_label, query, self.mx_search_circuit_cooldown_seconds)
+            with self._cache_lock:
+                self._mx_circuit_open_until = time.time() + self.mx_search_circuit_cooldown_seconds
+                self._mx_circuit_reason = "timeout"
             timeout_response = SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message="mx_timeout", search_time=time.time() - start)
             timeout_response.extra = {"route_label": route_label, "timeout_seconds": self.mx_search_route_timeout_seconds, "route_status": "timeout"}
             return timeout_response
         except Exception as exc:
-            logger.warning("[mx-search] 调用异常触发 fallback: label=%s query='%s' error=%s", route_label, query, exc)
+            logger.info("[mx-search] 路由熔断: label=%s query='%s' reason=exception cooldown=%ss", route_label, query, self.mx_search_circuit_cooldown_seconds)
+            with self._cache_lock:
+                self._mx_circuit_open_until = time.time() + self.mx_search_circuit_cooldown_seconds
+                self._mx_circuit_reason = "exception"
             return SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message=str(exc), search_time=time.time() - start)
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -2516,7 +2542,10 @@ class SearchService:
         raw_payload = resp.data if hasattr(resp, 'data') else resp
         if not getattr(resp, 'ok', False):
             err = getattr(resp, 'error', None) or 'mx_search_failed'
-            logger.warning("[mx-search] 调用异常触发 fallback: label=%s query='%s' error=%s", route_label, query, err)
+            logger.info("[mx-search] 路由熔断: label=%s query='%s' reason=bad_response cooldown=%ss", route_label, query, self.mx_search_circuit_cooldown_seconds)
+            with self._cache_lock:
+                self._mx_circuit_open_until = time.time() + self.mx_search_circuit_cooldown_seconds
+                self._mx_circuit_reason = "bad_response"
             return SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message=str(err), search_time=elapsed)
 
         mx_response = self._mx_search_to_response(query, raw_payload, provider="mx-search", max_results=max_results)
@@ -2531,7 +2560,7 @@ class SearchService:
                 return mx_response
             return SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message="mx_result_insufficient", search_time=elapsed)
 
-        logger.warning("[mx-search] 调用异常触发 fallback: label=%s query='%s' error=%s", route_label, query, mx_response.error_message or 'mx_result_empty')
+        logger.info("[mx-search] 结果为空触发 fallback: label=%s query='%s' reason=%s", route_label, query, mx_response.error_message or 'mx_result_empty')
         if not self.mx_search_fallback_enabled:
             return mx_response
         return SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message=mx_response.error_message or "mx_result_empty", search_time=elapsed)

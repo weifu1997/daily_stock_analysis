@@ -176,6 +176,66 @@ class TestMxSearchRouting(unittest.TestCase):
         self.assertEqual(mx_resp.error_message, "non_financial_query")
 
     @patch("src.search_service.get_config")
+    def test_mx_timeout_opens_circuit_and_short_circuits_followup_calls(self, mock_get_config):
+        mock_get_config.return_value = self._make_config(mx_search_route_timeout_seconds=0.1)
+        mx_client = MagicMock()
+        mx_client.enabled = True
+
+        class _FakeFuture:
+            def result(self, timeout=None):
+                raise TimeoutError()
+
+        class _FakeExecutor:
+            submitted = 0
+
+            def __init__(self, max_workers=1):
+                pass
+
+            def submit(self, *args, **kwargs):
+                type(self).submitted += 1
+                return _FakeFuture()
+
+            def shutdown(self, wait=False, cancel_futures=True):
+                return None
+
+        with patch("src.search_service.MxClient", return_value=mx_client), patch(
+            "src.search_service.ThreadPoolExecutor", _FakeExecutor
+        ):
+            service = SearchService(
+                bocha_keys=["dummy"],
+                tavily_keys=["dummy"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+
+            first = service._mx_search_with_timeout(
+                "贵州茅台 最新消息",
+                max_results=3,
+                days=3,
+                route_label="search_stock_news",
+                stock_code="600519",
+                stock_name="贵州茅台",
+                topic="news",
+            )
+            second = service._mx_search_with_timeout(
+                "贵州茅台 最新消息",
+                max_results=3,
+                days=3,
+                route_label="search_stock_news",
+                stock_code="600519",
+                stock_name="贵州茅台",
+                topic="news",
+            )
+
+        self.assertFalse(first.success)
+        self.assertEqual(first.error_message, "mx_timeout")
+        self.assertFalse(second.success)
+        self.assertEqual(second.error_message, "mx_circuit_open")
+        self.assertEqual(_FakeExecutor.submitted, 1)
+        self.assertEqual(mx_client.search.call_count, 0)
+
+    @patch("src.search_service.get_config")
     def test_comprehensive_intel_uses_mx_hit_before_fallback(self, mock_get_config):
         mock_get_config.return_value = self._make_config(mx_search_min_results=2)
         today = datetime.now().date().isoformat()
