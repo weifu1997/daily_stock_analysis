@@ -236,6 +236,87 @@ class TestMxSearchRouting(unittest.TestCase):
         self.assertEqual(mx_client.search.call_count, 0)
 
     @patch("src.search_service.get_config")
+    def test_mx_timeout_only_opens_circuit_for_same_route_label(self, mock_get_config):
+        mock_get_config.return_value = self._make_config(mx_search_route_timeout_seconds=0.1)
+        mx_client = MagicMock()
+        mx_client.enabled = True
+
+        class _TimeoutFuture:
+            def result(self, timeout=None):
+                raise TimeoutError()
+
+        class _OkFuture:
+            def result(self, timeout=None):
+                today = datetime.now().date().isoformat()
+                return SimpleNamespace(ok=True, data={"items": [
+                    {
+                        "title": "机构分析结果A",
+                        "summary": "摘要A",
+                        "url": "https://example.com/mx-analysis-a",
+                        "source": "mx",
+                        "published_at": today,
+                    },
+                    {
+                        "title": "机构分析结果B",
+                        "summary": "摘要B",
+                        "url": "https://example.com/mx-analysis-b",
+                        "source": "mx",
+                        "published_at": today,
+                    },
+                ]})
+
+        class _FakeExecutor:
+            submitted = 0
+
+            def __init__(self, max_workers=1):
+                pass
+
+            def submit(self, *args, **kwargs):
+                type(self).submitted += 1
+                if type(self).submitted == 1:
+                    return _TimeoutFuture()
+                return _OkFuture()
+
+            def shutdown(self, wait=False, cancel_futures=True):
+                return None
+
+        with patch("src.search_service.MxClient", return_value=mx_client), patch(
+            "src.search_service.ThreadPoolExecutor", _FakeExecutor
+        ):
+            service = SearchService(
+                bocha_keys=["dummy"],
+                tavily_keys=["dummy"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+
+            timeout_resp = service._mx_search_with_timeout(
+                "贵州茅台 最新消息",
+                max_results=3,
+                days=3,
+                route_label="search_comprehensive_intel:latest_news",
+                stock_code="600519",
+                stock_name="贵州茅台",
+                topic="news",
+            )
+            other_route_resp = service._mx_search_with_timeout(
+                "贵州茅台 研报 目标价 评级 深度分析",
+                max_results=3,
+                days=3,
+                route_label="search_comprehensive_intel:market_analysis",
+                stock_code="600519",
+                stock_name="贵州茅台",
+                topic="news",
+            )
+
+        self.assertEqual(timeout_resp.error_message, "mx_timeout")
+        self.assertTrue(other_route_resp.success)
+        self.assertEqual(other_route_resp.provider, "mx-search")
+        self.assertEqual([item.title for item in other_route_resp.results], ["机构分析结果A", "机构分析结果B"])
+        self.assertEqual(_FakeExecutor.submitted, 2)
+
+    @patch("src.search_service.get_config")
     def test_comprehensive_intel_uses_mx_hit_before_fallback(self, mock_get_config):
         mock_get_config.return_value = self._make_config(mx_search_min_results=2)
         today = datetime.now().date().isoformat()

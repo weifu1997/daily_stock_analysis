@@ -2135,8 +2135,7 @@ class SearchService:
         self.mx_search_min_results = max(1, int(getattr(cfg, "mx_search_min_results", 3) or 3))
         self.mx_search_route_timeout_seconds = max(0.1, float(getattr(cfg, "mx_search_route_timeout_seconds", 7.5) or 7.5))
         self.mx_search_circuit_cooldown_seconds = max(0, int(getattr(cfg, "circuit_breaker_cooldown", 300) or 300))
-        self._mx_circuit_open_until: float = 0.0
-        self._mx_circuit_reason: str = ""
+        self._mx_route_circuits: Dict[str, Dict[str, Any]] = {}
         self.mx_client = MxClient(
             timeout=min(float(getattr(cfg, "mx_timeout_seconds", 8.0) or 8.0), self.mx_search_route_timeout_seconds)
         )
@@ -2578,6 +2577,42 @@ class SearchService:
             error_message=None if results else "mx_search_no_results",
         )
 
+    def _get_mx_route_circuit(self, route_label: str) -> Optional[Dict[str, Any]]:
+        now = time.time()
+        circuit = self._mx_route_circuits.get(route_label)
+        if not circuit:
+            return None
+        open_until = float(circuit.get("open_until") or 0.0)
+        if open_until and now < open_until:
+            return circuit
+        self._mx_route_circuits.pop(route_label, None)
+        return None
+
+    def _open_mx_route_circuit(self, route_label: str, reason: str) -> float:
+        open_until = time.time() + self.mx_search_circuit_cooldown_seconds
+        self._mx_route_circuits[route_label] = {
+            "open_until": open_until,
+            "reason": reason,
+        }
+        return open_until
+
+    def _build_mx_circuit_open_response(self, query: str, route_label: str) -> SearchResponse:
+        circuit = self._get_mx_route_circuit(route_label) or {}
+        response = SearchResponse(
+            query=query,
+            results=[],
+            provider="mx-search",
+            success=False,
+            error_message="mx_circuit_open",
+        )
+        setattr(response, "extra", {
+            "route_label": route_label,
+            "route_status": "circuit_open",
+            "circuit_reason": circuit.get("reason", "unknown"),
+            "circuit_open_until": circuit.get("open_until", 0.0),
+        })
+        return response
+
     def _mx_search_with_timeout(
         self,
         query: str,
@@ -2594,21 +2629,9 @@ class SearchService:
             return SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message="mx_route_disabled")
 
         with self._cache_lock:
-            if self._mx_circuit_open_until and time.time() < self._mx_circuit_open_until:
-                response = SearchResponse(
-                    query=query,
-                    results=[],
-                    provider="mx-search",
-                    success=False,
-                    error_message="mx_circuit_open",
-                )
-                setattr(response, "extra", {
-                    "route_label": route_label,
-                    "route_status": "circuit_open",
-                    "circuit_reason": self._mx_circuit_reason,
-                    "circuit_open_until": self._mx_circuit_open_until,
-                })
-                return response
+            circuit = self._get_mx_route_circuit(route_label)
+            if circuit:
+                return self._build_mx_circuit_open_response(query, route_label)
 
         if not self._is_financial_query(query, stock_code=stock_code, stock_name=stock_name):
             logger.info("[mx-search] 非金融 query 直接走兜底: label=%s query='%s'", route_label, query)
@@ -2622,16 +2645,14 @@ class SearchService:
         except FuturesTimeoutError:
             logger.info("[mx-search] 路由熔断: label=%s query='%s' reason=timeout cooldown=%ss", route_label, query, self.mx_search_circuit_cooldown_seconds)
             with self._cache_lock:
-                self._mx_circuit_open_until = time.time() + self.mx_search_circuit_cooldown_seconds
-                self._mx_circuit_reason = "timeout"
+                self._open_mx_route_circuit(route_label, "timeout")
             timeout_response = SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message="mx_timeout", search_time=time.time() - start)
             timeout_response.extra = {"route_label": route_label, "timeout_seconds": self.mx_search_route_timeout_seconds, "route_status": "timeout"}
             return timeout_response
         except Exception as exc:
             logger.info("[mx-search] 路由熔断: label=%s query='%s' reason=exception cooldown=%ss", route_label, query, self.mx_search_circuit_cooldown_seconds)
             with self._cache_lock:
-                self._mx_circuit_open_until = time.time() + self.mx_search_circuit_cooldown_seconds
-                self._mx_circuit_reason = "exception"
+                self._open_mx_route_circuit(route_label, "exception")
             return SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message=str(exc), search_time=time.time() - start)
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -2642,8 +2663,7 @@ class SearchService:
             err = getattr(resp, 'error', None) or 'mx_search_failed'
             logger.info("[mx-search] 路由熔断: label=%s query='%s' reason=bad_response cooldown=%ss", route_label, query, self.mx_search_circuit_cooldown_seconds)
             with self._cache_lock:
-                self._mx_circuit_open_until = time.time() + self.mx_search_circuit_cooldown_seconds
-                self._mx_circuit_reason = "bad_response"
+                self._open_mx_route_circuit(route_label, "bad_response")
             return SearchResponse(query=query, results=[], provider="mx-search", success=False, error_message=str(err), search_time=elapsed)
 
         mx_response = self._mx_search_to_response(query, raw_payload, provider="mx-search", max_results=max_results)
