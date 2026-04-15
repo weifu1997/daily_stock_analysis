@@ -2136,17 +2136,24 @@ class SearchService:
         self.mx_search_route_timeout_seconds = max(0.1, float(getattr(cfg, "mx_search_route_timeout_seconds", 7.5) or 7.5))
         self.mx_search_circuit_cooldown_seconds = max(0, int(getattr(cfg, "circuit_breaker_cooldown", 300) or 300))
         self._mx_route_circuits: Dict[str, Dict[str, Any]] = {}
+        configured_mx_timeout = max(0.1, float(getattr(cfg, "mx_timeout_seconds", 8.0) or 8.0))
+        mx_timeout_margin = min(0.5, self.mx_search_route_timeout_seconds * 0.2)
+        self.mx_client_timeout_seconds = min(
+            configured_mx_timeout,
+            max(0.1, self.mx_search_route_timeout_seconds - mx_timeout_margin),
+        )
         self.mx_client = MxClient(
-            timeout=min(float(getattr(cfg, "mx_timeout_seconds", 8.0) or 8.0), self.mx_search_route_timeout_seconds)
+            timeout=self.mx_client_timeout_seconds
         )
         self.mx_enabled = bool(getattr(cfg, "mx_enabled", False)) and self.mx_client.enabled
 
         logger.info(
-            "mx-search 路由配置: primary=%s, fallback=%s, min_results=%s, route_timeout=%.1fs, client_enabled=%s",
+            "mx-search 路由配置: primary=%s, fallback=%s, min_results=%s, route_timeout=%.1fs, client_timeout=%.1fs, client_enabled=%s",
             self.mx_search_primary_provider,
             self.mx_search_fallback_enabled,
             self.mx_search_min_results,
             self.mx_search_route_timeout_seconds,
+            self.mx_client_timeout_seconds,
             self.mx_client.enabled,
         )
 

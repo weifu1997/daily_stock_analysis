@@ -75,6 +75,57 @@ class TestMxSearchRouting(unittest.TestCase):
         mx_client.search.assert_called()
 
     @patch("src.search_service.get_config")
+    def test_mx_client_timeout_keeps_margin_below_route_timeout(self, mock_get_config):
+        mock_get_config.return_value = self._make_config(
+            mx_search_route_timeout_seconds=7.5,
+            mx_timeout_seconds=8.0,
+        )
+        with patch("src.search_service.MxClient") as mock_mx_client:
+            mock_mx_client.return_value.enabled = True
+            SearchService(
+                bocha_keys=["dummy"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+
+        self.assertEqual(mock_mx_client.call_args.kwargs["timeout"], 7.0)
+
+    @patch("src.search_service.get_config")
+    def test_mx_client_timeout_uses_proportional_margin_for_small_route_budget(self, mock_get_config):
+        mock_get_config.return_value = self._make_config(
+            mx_search_route_timeout_seconds=0.3,
+            mx_timeout_seconds=8.0,
+        )
+        with patch("src.search_service.MxClient") as mock_mx_client:
+            mock_mx_client.return_value.enabled = True
+            SearchService(
+                bocha_keys=["dummy"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+
+        self.assertAlmostEqual(mock_mx_client.call_args.kwargs["timeout"], 0.24, places=2)
+
+    @patch("src.search_service.get_config")
+    def test_mx_client_timeout_respects_lower_configured_timeout(self, mock_get_config):
+        mock_get_config.return_value = self._make_config(
+            mx_search_route_timeout_seconds=7.5,
+            mx_timeout_seconds=0.2,
+        )
+        with patch("src.search_service.MxClient") as mock_mx_client:
+            mock_mx_client.return_value.enabled = True
+            SearchService(
+                bocha_keys=["dummy"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+
+        self.assertEqual(mock_mx_client.call_args.kwargs["timeout"], 0.2)
+
+    @patch("src.search_service.get_config")
     def test_mx_insufficient_results_falls_back_to_legacy_provider(self, mock_get_config):
         mock_get_config.return_value = self._make_config(mx_search_min_results=3)
         mx_client = MagicMock()

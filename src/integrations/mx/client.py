@@ -54,6 +54,10 @@ class MxClient:
                     data = resp.text
                 return MxResponse(ok=True, data=data, source="mx", latency_ms=latency_ms, raw={"status_code": resp.status_code})
             return MxResponse(ok=False, error=f"http_{resp.status_code}", source="mx", latency_ms=latency_ms, raw={"text": resp.text[:500]})
+        except requests.Timeout as exc:
+            latency_ms = int((time.time() - start) * 1000)
+            logger.info("mx request timed out after %.2fs: %s", self.timeout, exc)
+            return MxResponse(ok=False, error=str(exc), source="mx", latency_ms=latency_ms)
         except Exception as exc:
             latency_ms = int((time.time() - start) * 1000)
             logger.warning("mx request failed: %s", exc)

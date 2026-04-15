@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 
+import logging
 import sys
 from unittest.mock import MagicMock, patch
+
+import requests
 
 try:
     import litellm  # noqa: F401
@@ -21,6 +24,24 @@ class TestMxClient:
         resp = client.healthcheck()
         assert not resp.ok
         assert resp.error == "mx_disabled"
+
+    def test_timeout_logs_info_instead_of_warning(self, caplog):
+        with patch("src.integrations.mx.client.get_config") as mock_cfg:
+            mock_cfg.return_value = MagicMock(
+                mx_base_url="https://mx.example.com",
+                mx_api_key="dummy",
+                mx_timeout_seconds=1.0,
+            )
+            client = MxClient()
+
+        with patch("src.integrations.mx.client.requests.post", side_effect=requests.Timeout("read timed out")):
+            with caplog.at_level(logging.INFO):
+                resp = client.search("贵州茅台 最新消息")
+
+        assert not resp.ok
+        assert "read timed out" in resp.error
+        assert any(record.levelno == logging.INFO and "mx request timed out" in record.message for record in caplog.records)
+        assert all(record.levelno < logging.WARNING for record in caplog.records if "mx request" in record.message)
 
     def test_search_adapter_transforms_items(self):
         fake_client = MagicMock()
