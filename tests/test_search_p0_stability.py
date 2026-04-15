@@ -379,6 +379,14 @@ class TestExtractDateValue(unittest.TestCase):
         val = SearchService.extract_date_value({})
         self.assertIsNone(val)
 
+    def test_nested_metadata_dict(self):
+        val = SearchService.extract_date_value({"metadata": {"pubdate": "2026-04-14"}})
+        self.assertEqual(val, "2026-04-14")
+
+    def test_nested_list_of_dicts(self):
+        val = SearchService.extract_date_value({"items": [{"title": "x"}, {"publishedDate": "2026-04-14"}]})
+        self.assertEqual(val, "2026-04-14")
+
     def test_published_date_takes_precedence(self):
         """published_date 优先于 date。"""
         val = SearchService.extract_date_value({

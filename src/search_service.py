@@ -2654,14 +2654,36 @@ class SearchService:
     def extract_date_value(cls, item: dict) -> Any:
         """Extract the first non-empty date value from a provider result dict.
 
-        Tries all known date field names in priority order.
+        Tries all known date field names in priority order. If the provider nests
+        date metadata inside common dict/list containers, we also scan those
+        shallowly so raw results with structured payloads do not get dropped as
+        ``drop_no_field`` unnecessarily.
+
         Returns the raw value (str/datetime/None) without parsing.
         """
-        for field in cls._DATE_FIELD_CANDIDATES:
-            val = item.get(field)
-            if val is not None and str(val).strip():
-                return val
-        return None
+        def _scan(obj: Any, depth: int = 0) -> Any:
+            if not isinstance(obj, dict):
+                return None
+            for field in cls._DATE_FIELD_CANDIDATES:
+                val = obj.get(field)
+                if val is not None and str(val).strip():
+                    return val
+            if depth >= 2:
+                return None
+            for value in obj.values():
+                if isinstance(value, dict):
+                    found = _scan(value, depth + 1)
+                    if found is not None:
+                        return found
+                elif isinstance(value, list):
+                    for item_value in value:
+                        if isinstance(item_value, dict):
+                            found = _scan(item_value, depth + 1)
+                            if found is not None:
+                                return found
+            return None
+
+        return _scan(item)
 
     @classmethod
     def _normalize_news_publish_date_with_reason(
