@@ -24,6 +24,7 @@ from src.enums import ReportType
 from src.report_language import (
     get_localized_stock_name,
     get_report_labels,
+    infer_decision_type_from_advice,
     get_signal_level,
     localize_chip_health,
     localize_operation_advice,
@@ -536,10 +537,19 @@ class NotificationService(
             reverse=True
         )
         
-        # 统计信息 - 使用 decision_type 字段准确统计
-        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
-        sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
-        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
+        # 统计 - 与摘要列表统一按 operation_advice 归类
+        buy_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'buy'
+        )
+        sell_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'sell'
+        )
+        hold_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'hold'
+        )
         avg_score = sum(r.sentiment_score for r in results) / len(results) if results else 0
         
         report_lines.extend([
@@ -789,10 +799,19 @@ class NotificationService(
         # 按评分排序（高分在前）
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
 
-        # 统计信息 - 使用 decision_type 字段准确统计
-        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
-        sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
-        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
+        # 统计 - 与摘要列表统一按 operation_advice 归类
+        buy_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'buy'
+        )
+        sell_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'sell'
+        )
+        hold_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'hold'
+        )
 
         report_lines = [
             f"# 🎯 {report_date} {labels['dashboard_title']}",
@@ -1106,10 +1125,19 @@ class NotificationService(
         # 按评分排序
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
         
-        # 统计 - 使用 decision_type 字段准确统计
-        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
-        sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
-        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
+        # 统计 - 与摘要列表统一按 operation_advice 归类
+        buy_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'buy'
+        )
+        sell_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'sell'
+        )
+        hold_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'hold'
+        )
         
         lines = [
             f"## 🎯 {report_date} {labels['dashboard_title']}",
@@ -1256,10 +1284,19 @@ class NotificationService(
         # 按评分排序
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
 
-        # 统计 - 使用 decision_type 字段准确统计
-        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
-        sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
-        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
+        # 统计 - 与摘要列表统一按 operation_advice 归类
+        buy_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'buy'
+        )
+        sell_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'sell'
+        )
+        hold_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'hold'
+        )
         avg_score = sum(r.sentiment_score for r in results) / len(results) if results else 0
 
         lines = [
@@ -1349,9 +1386,18 @@ class NotificationService(
         if not results:
             return f"# {report_date} {labels['brief_title']}\n\n{labels['no_results']}"
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
-        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
-        sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
-        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
+        buy_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'buy'
+        )
+        sell_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'sell'
+        )
+        hold_count = sum(
+            1 for r in results
+            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'hold'
+        )
         lines = [
             f"# {report_date} {labels['brief_title']}",
             "",

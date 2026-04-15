@@ -207,6 +207,30 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertIn("Buy", out)
 
     @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_fallback_counts_follow_operation_advice(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False, report_language="zh")
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=61,
+            trend_prediction="看多",
+            operation_advice="观望",
+            analysis_summary="等待确认。",
+            decision_type="sell",
+            report_language="zh",
+            dashboard={},
+        )
+
+        out = service.generate_dashboard_report([result], report_date="2026-03-18")
+
+        self.assertIn("🟡观望:1", out)
+        self.assertIn("🔴卖出:0", out)
+        self.assertNotIn("🔴卖出:1", out)
+
+    @mock.patch("src.notification.get_config")
     def test_generate_dashboard_report_localizes_english_no_dashboard_fallback(
         self, mock_get_config: mock.MagicMock
     ):

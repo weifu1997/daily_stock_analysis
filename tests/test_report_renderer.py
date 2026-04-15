@@ -61,6 +61,15 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("贵州茅台", out)
         self.assertIn("持有", out)
 
+    def test_render_markdown_summary_counts_follow_operation_advice(self) -> None:
+        """Top-line counts must use operation_advice so summary and body stay aligned."""
+        r = _make_result(operation_advice="观望", decision_type="sell")
+        out = render("markdown", [r], summary_only=True)
+        self.assertIsNotNone(out)
+        self.assertIn("🟡观望:1", out)
+        self.assertIn("🔴卖出:0", out)
+        self.assertNotIn("🔴卖出:1", out)
+
     def test_render_markdown_full(self) -> None:
         """Markdown platform renders full report."""
         r = _make_result()

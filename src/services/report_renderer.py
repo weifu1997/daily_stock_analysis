@@ -19,6 +19,7 @@ from src.report_language import (
     get_localized_stock_name,
     get_report_labels,
     get_signal_level,
+    infer_decision_type_from_advice,
     localize_chip_health,
     localize_operation_advice,
     localize_trend_prediction,
@@ -128,9 +129,18 @@ def render(
             "localized_trend_prediction": localize_trend_prediction(r.trend_prediction, report_language),
         })
 
-    buy_count = sum(1 for r in results if getattr(r, "decision_type", "") == "buy")
-    sell_count = sum(1 for r in results if getattr(r, "decision_type", "") == "sell")
-    hold_count = sum(1 for r in results if getattr(r, "decision_type", "") in ("hold", ""))
+    buy_count = sum(
+        1 for r in results
+        if infer_decision_type_from_advice(getattr(r, "operation_advice", None)) == "buy"
+    )
+    sell_count = sum(
+        1 for r in results
+        if infer_decision_type_from_advice(getattr(r, "operation_advice", None)) == "sell"
+    )
+    hold_count = sum(
+        1 for r in results
+        if infer_decision_type_from_advice(getattr(r, "operation_advice", None)) == "hold"
+    )
 
     report_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
