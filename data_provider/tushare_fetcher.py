@@ -829,25 +829,21 @@ class TushareFetcher(BaseFetcher):
             else:
                 use_realtime = False
 
-            # 若实盘的时候使用 则使用其他可以实盘获取的数据源 akshare、efinance
+            # 盘中默认不再优先调用 rt_k；市场广度优先走 TickFlow / Efinance，
+            # Tushare 仅保留收盘后日线统计或最后兜底。
             if use_realtime:
-                try:
-                    df = self._call_api_with_rate_limit("rt_k", ts_code='3*.SZ,6*.SH,0*.SZ,92*.BJ')
-                    if df is not None and not df.empty:
-                        return self._calc_market_stats(df)
-                    
-                except Exception as e:
-                    logger.error(f"[Tushare] ts.pro_api().rt_k 尝试获取实时数据失败: {e}")
-                    return None
-            else:
+                logger.info(
+                    "[Tushare] 盘中市场统计降级：不再优先调用 rt_k，交由 TickFlow/Efinance 处理"
+                )
+                return None
 
-                if current_date not in trade_dates:
-                    last_date = self._pick_trade_date(trade_dates, use_today=True)  # 拿最近的日期
-                else:
-                    if current_clock < '09:30': 
-                        last_date = self._pick_trade_date(trade_dates, use_today=False)  # 拿取前一天的数据
-                    else:  # 即 '> 16:30'                  
-                        last_date = self._pick_trade_date(trade_dates, use_today=True)  # 拿取当天的数据
+            if current_date not in trade_dates:
+                last_date = self._pick_trade_date(trade_dates, use_today=True)  # 拿最近的日期
+            else:
+                if current_clock < '09:30': 
+                    last_date = self._pick_trade_date(trade_dates, use_today=False)  # 拿取前一天的数据
+                else:  # 即 '> 16:30'                  
+                    last_date = self._pick_trade_date(trade_dates, use_today=True)  # 拿取当天的数据
 
                 if last_date is None:
                     return None

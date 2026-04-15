@@ -1762,7 +1762,18 @@ class DataFetcherManager:
             except Exception as e:
                 logger.warning(f"[TickFlowFetcher] 获取市场统计失败: {e}")
 
-        for fetcher in self._fetchers:
+        non_tushare_fetchers = [
+            fetcher
+            for fetcher in self._fetchers
+            if getattr(fetcher, "name", fetcher.__class__.__name__) != "TushareFetcher"
+        ]
+        tushare_fetchers = [
+            fetcher
+            for fetcher in self._fetchers
+            if getattr(fetcher, "name", fetcher.__class__.__name__) == "TushareFetcher"
+        ]
+
+        for fetcher in non_tushare_fetchers + tushare_fetchers:
             try:
                 data = fetcher.get_market_stats()
                 if data:

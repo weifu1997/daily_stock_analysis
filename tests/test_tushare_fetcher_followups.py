@@ -136,6 +136,46 @@ class TestTushareFetcherFollowUps(unittest.TestCase):
         self.assertEqual(fetcher._api.cyq_chips.call_args.kwargs["trade_date"], "20260314")
         self.assertEqual(rate_limit_mock.call_count, 3)
 
+    def test_get_market_stats_skips_rt_k_during_intraday(self) -> None:
+        fetcher = self._make_fetcher()
+        fetcher._api.daily.reset_mock()
+        fetcher._api.stock_basic.reset_mock()
+        fetcher._api.rt_k = MagicMock(side_effect=AssertionError("rt_k should not be called intraday"))
+        fetcher._api.trade_cal.return_value = pd.DataFrame(
+            {"cal_date": ["20260317", "20260314"], "is_open": [1, 1]}
+        )
+
+        with patch.object(fetcher, "_get_china_now", return_value=datetime(2026, 3, 17, 12, 0)):
+            self.assertIsNone(fetcher.get_market_stats())
+
+        fetcher._api.rt_k.assert_not_called()
+        fetcher._api.daily.assert_not_called()
+        fetcher._api.stock_basic.assert_not_called()
+
+    def test_get_market_stats_uses_daily_after_close(self) -> None:
+        fetcher = self._make_fetcher()
+        fetcher._api.trade_cal.return_value = pd.DataFrame(
+            {"cal_date": ["20260317", "20260314"], "is_open": [1, 1]}
+        )
+        fetcher._api.daily.return_value = pd.DataFrame(
+            {
+                "ts_code": ["600519.SH"],
+                "close": [10.5],
+                "pre_close": [10.0],
+                "amount": [1.0],
+            }
+        )
+        fetcher._api.stock_basic.return_value = pd.DataFrame(
+            {"ts_code": ["600519.SH"], "name": ["贵州茅台"]}
+        )
+
+        with patch.object(fetcher, "_get_china_now", return_value=datetime(2026, 3, 17, 20, 0)):
+            stats = fetcher.get_market_stats()
+
+        self.assertIsNotNone(stats)
+        self.assertEqual(fetcher._api.daily.call_args.kwargs["start_date"], "20260317")
+        self.assertEqual(fetcher._api.daily.call_args.kwargs["end_date"], "20260317")
+
     def test_convert_stock_code_accepts_exchange_prefixed_a_share(self) -> None:
         fetcher = self._make_fetcher()
 

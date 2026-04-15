@@ -118,6 +118,8 @@ class TestTickFlowMarketReviewFallback(unittest.TestCase):
         data = DataFetcherManager.get_market_stats(manager)
 
         self.assertEqual(data["up_count"], 1)
+        self.assertEqual(data["down_count"], 2)
+        self.assertEqual(data["flat_count"], 3)
         self.assertEqual(fallback.stats_calls, 1)
 
     @patch("src.config.get_config")
@@ -135,6 +137,27 @@ class TestTickFlowMarketReviewFallback(unittest.TestCase):
 
         self.assertEqual(data["up_count"], 2)
         self.assertEqual(fallback.stats_calls, 1)
+
+    def test_manager_prefers_non_tushare_before_tushare_for_market_stats(self):
+        manager = DataFetcherManager.__new__(DataFetcherManager)
+        efinance = _DummyFetcher(
+            "EfinanceFetcher",
+            stats={"up_count": 7, "down_count": 1, "flat_count": 2},
+        )
+        tushare = _DummyFetcher(
+            "TushareFetcher",
+            stats={"up_count": 1, "down_count": 9, "flat_count": 0},
+        )
+        manager._fetchers = [tushare, efinance]
+        manager._get_tickflow_fetcher = lambda: None
+
+        data = DataFetcherManager.get_market_stats(manager)
+
+        self.assertEqual(data["up_count"], 7)
+        self.assertEqual(data["down_count"], 1)
+        self.assertEqual(data["flat_count"], 2)
+        self.assertEqual(efinance.stats_calls, 1)
+        self.assertEqual(tushare.stats_calls, 0)
 
     def test_manager_close_releases_tickflow_fetcher(self):
         manager = DataFetcherManager.__new__(DataFetcherManager)
