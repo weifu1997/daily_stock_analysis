@@ -2030,7 +2030,7 @@ class SearchService:
 
         # ── 统一 provider 优先级排序（P0-1: 消除隐式漂移）──
         self._provider_priority = list(getattr(cfg, "search_provider_priority", [])) or [
-            "searxng", "bocha", "tavily", "brave", "serpapi", "minimax",
+            "mx-search", "searxng", "tavily", "serpapi",
         ]
         self._sort_providers_by_priority()
         logger.info(

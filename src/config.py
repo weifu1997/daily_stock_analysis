@@ -514,7 +514,7 @@ class Config:
     news_max_age_days: int = 3   # 新闻最大时效（天）
     news_strategy_profile: str = "short"  # 新闻窗口策略档位：ultra_short/short/medium/long
     search_provider_priority: List[str] = field(default_factory=lambda: [
-        "searxng", "bocha", "tavily", "brave", "serpapi", "minimax",
+        "mx-search", "searxng", "tavily", "serpapi",
     ])  # 统一 provider 优先级，所有搜索入口共用
     bias_threshold: float = 5.0  # 乖离率阈值（%），超过此值提示不追高
 
@@ -1877,7 +1877,7 @@ class Config:
         return normalized
 
     _VALID_PROVIDER_NAMES = frozenset({
-        "searxng", "bocha", "tavily", "brave", "serpapi", "minimax",
+        "mx-search", "searxng", "tavily", "serpapi", "bocha", "brave", "minimax",
     })
 
     @classmethod
