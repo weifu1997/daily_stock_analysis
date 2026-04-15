@@ -84,6 +84,17 @@ class TestTushareFetcherFollowUps(unittest.TestCase):
         fetcher._api.trade_cal.return_value = pd.DataFrame(
             {"cal_date": ["20260317", "20260314"], "is_open": [1, 1]}
         )
+        fetcher._api.cyq_perf.return_value = pd.DataFrame(
+            {
+                "trade_date": ["20260317"],
+                "cost_5pct": [9.0],
+                "cost_15pct": [9.0],
+                "cost_85pct": [11.0],
+                "cost_95pct": [11.0],
+                "weight_avg": [10.1],
+                "winner_rate": [70.0],
+            }
+        )
         fetcher._api.cyq_chips.return_value = pd.DataFrame(
             {
                 "price": [9.0, 10.0, 11.0],
@@ -105,12 +116,169 @@ class TestTushareFetcherFollowUps(unittest.TestCase):
         self.assertAlmostEqual(chip.avg_cost, 10.1)
         self.assertAlmostEqual(chip.concentration_90, 0.1)
         self.assertAlmostEqual(chip.concentration_70, 0.1)
-        self.assertEqual(rate_limit_mock.call_count, 3)
+        self.assertEqual(chip.source, "tushare_cyq_perf")
+        self.assertEqual(rate_limit_mock.call_count, 2)
+
+    def test_get_chip_distribution_prefers_cyq_perf_over_cyq_chips(self) -> None:
+        fetcher = self._make_fetcher()
+        fetcher._api.trade_cal.return_value = pd.DataFrame(
+            {"cal_date": ["20260317", "20260314"], "is_open": [1, 1]}
+        )
+        fetcher._api.cyq_perf.return_value = pd.DataFrame(
+            {
+                "trade_date": ["20260317"],
+                "cost_5pct": [9.0],
+                "cost_15pct": [9.0],
+                "cost_85pct": [11.0],
+                "cost_95pct": [11.0],
+                "weight_avg": [10.1],
+                "winner_rate": [70.0],
+            }
+        )
+        fetcher._api.cyq_chips.side_effect = AssertionError("cyq_chips should not be called when cyq_perf has data")
+        fetcher._api.daily.return_value = pd.DataFrame({"close": [10.5]})
+
+        with patch.object(fetcher, "_get_china_now", return_value=datetime(2026, 3, 17, 20, 0)):
+            chip = fetcher.get_chip_distribution("600519")
+
+        self.assertIsNotNone(chip)
+        if chip is None:
+            self.fail("expected chip distribution data")
+        self.assertEqual(chip.source, "tushare_cyq_perf")
+        self.assertAlmostEqual(chip.profit_ratio, 0.7)
+        self.assertAlmostEqual(chip.avg_cost, 10.1)
+        self.assertAlmostEqual(chip.cost_90_low, 9.0)
+        self.assertAlmostEqual(chip.cost_90_high, 11.0)
+        self.assertAlmostEqual(chip.cost_70_low, 9.0)
+        self.assertAlmostEqual(chip.cost_70_high, 11.0)
+
+    def test_get_chip_distribution_falls_back_to_cyq_chips_when_cyq_perf_empty(self) -> None:
+        fetcher = self._make_fetcher()
+        fetcher._api.trade_cal.return_value = pd.DataFrame(
+            {"cal_date": ["20260317", "20260314"], "is_open": [1, 1]}
+        )
+        fetcher._api.cyq_perf.return_value = pd.DataFrame()
+        fetcher._api.cyq_chips.return_value = pd.DataFrame(
+            {
+                "price": [9.0, 10.0, 11.0],
+                "percent": [20.0, 50.0, 30.0],
+            }
+        )
+        fetcher._api.daily.return_value = pd.DataFrame({"close": [10.5]})
+
+        with patch.object(fetcher, "_get_china_now", return_value=datetime(2026, 3, 17, 20, 0)):
+            chip = fetcher.get_chip_distribution("600519")
+
+        self.assertIsNotNone(chip)
+        if chip is None:
+            self.fail("expected chip distribution data")
+        self.assertEqual(chip.source, "tushare_cyq_chips")
+        self.assertAlmostEqual(chip.profit_ratio, 0.7)
+
+    def test_get_chip_distribution_falls_back_to_cyq_chips_when_cyq_perf_missing_fields(self) -> None:
+        fetcher = self._make_fetcher()
+        fetcher._api.trade_cal.return_value = pd.DataFrame(
+            {"cal_date": ["20260317", "20260314"], "is_open": [1, 1]}
+        )
+        fetcher._api.cyq_perf.return_value = pd.DataFrame(
+            {
+                "trade_date": ["20260317"],
+                "cost_5pct": [9.0],
+                "cost_15pct": [9.0],
+                "cost_85pct": [11.0],
+                "cost_95pct": [11.0],
+                "weight_avg": [None],
+                "winner_rate": [70.0],
+            }
+        )
+        fetcher._api.cyq_chips.return_value = pd.DataFrame(
+            {
+                "price": [9.0, 10.0, 11.0],
+                "percent": [20.0, 50.0, 30.0],
+            }
+        )
+        fetcher._api.daily.return_value = pd.DataFrame({"close": [10.5]})
+
+        with patch.object(fetcher, "_get_china_now", return_value=datetime(2026, 3, 17, 20, 0)):
+            chip = fetcher.get_chip_distribution("600519")
+
+        self.assertIsNotNone(chip)
+        if chip is None:
+            self.fail("expected chip distribution data")
+        self.assertEqual(chip.source, "tushare_cyq_chips")
+        self.assertAlmostEqual(chip.avg_cost, 10.1)
+
+    def test_get_chip_distribution_falls_back_to_cyq_chips_when_cyq_perf_raises(self) -> None:
+        fetcher = self._make_fetcher()
+        fetcher._api.trade_cal.return_value = pd.DataFrame(
+            {"cal_date": ["20260317", "20260314"], "is_open": [1, 1]}
+        )
+        fetcher._api.cyq_perf.side_effect = RuntimeError("cyq_perf permission denied")
+        fetcher._api.cyq_chips.return_value = pd.DataFrame(
+            {
+                "price": [9.0, 10.0, 11.0],
+                "percent": [20.0, 50.0, 30.0],
+            }
+        )
+        fetcher._api.daily.return_value = pd.DataFrame({"close": [10.5]})
+
+        with patch.object(fetcher, "_get_china_now", return_value=datetime(2026, 3, 17, 20, 0)):
+            chip = fetcher.get_chip_distribution("600519")
+
+        self.assertIsNotNone(chip)
+        if chip is None:
+            self.fail("expected chip distribution data")
+        self.assertEqual(chip.source, "tushare_cyq_chips")
+        self.assertAlmostEqual(chip.profit_ratio, 0.7)
+
+    def test_get_chip_distribution_falls_back_to_cyq_chips_when_cyq_perf_has_invalid_numeric_values(self) -> None:
+        fetcher = self._make_fetcher()
+        fetcher._api.trade_cal.return_value = pd.DataFrame(
+            {"cal_date": ["20260317", "20260314"], "is_open": [1, 1]}
+        )
+        fetcher._api.cyq_perf.return_value = pd.DataFrame(
+            {
+                "trade_date": ["20260317"],
+                "cost_5pct": ["bad"],
+                "cost_15pct": [9.0],
+                "cost_85pct": [11.0],
+                "cost_95pct": [11.0],
+                "weight_avg": [10.1],
+                "winner_rate": [70.0],
+            }
+        )
+        fetcher._api.cyq_chips.return_value = pd.DataFrame(
+            {
+                "price": [9.0, 10.0, 11.0],
+                "percent": [20.0, 50.0, 30.0],
+            }
+        )
+        fetcher._api.daily.return_value = pd.DataFrame({"close": [10.5]})
+
+        with patch.object(fetcher, "_get_china_now", return_value=datetime(2026, 3, 17, 20, 0)):
+            chip = fetcher.get_chip_distribution("600519")
+
+        self.assertIsNotNone(chip)
+        if chip is None:
+            self.fail("expected chip distribution data")
+        self.assertEqual(chip.source, "tushare_cyq_chips")
+        self.assertAlmostEqual(chip.avg_cost, 10.1)
 
     def test_get_chip_distribution_uses_previous_trade_day_before_close(self) -> None:
         fetcher = self._make_fetcher()
         fetcher._api.trade_cal.return_value = pd.DataFrame(
             {"cal_date": ["20260317", "20260314"], "is_open": [1, 1]}
+        )
+        fetcher._api.cyq_perf.return_value = pd.DataFrame(
+            {
+                "trade_date": ["20260314"],
+                "cost_5pct": [9.0],
+                "cost_15pct": [9.0],
+                "cost_85pct": [11.0],
+                "cost_95pct": [11.0],
+                "weight_avg": [10.1],
+                "winner_rate": [70.0],
+            }
         )
         fetcher._api.cyq_chips.return_value = pd.DataFrame(
             {
@@ -133,8 +301,8 @@ class TestTushareFetcherFollowUps(unittest.TestCase):
         self.assertAlmostEqual(chip.avg_cost, 10.1)
         self.assertAlmostEqual(chip.concentration_90, 0.1)
         self.assertAlmostEqual(chip.concentration_70, 0.1)
-        self.assertEqual(fetcher._api.cyq_chips.call_args.kwargs["trade_date"], "20260314")
-        self.assertEqual(rate_limit_mock.call_count, 3)
+        self.assertEqual(fetcher._api.cyq_perf.call_args.kwargs["trade_date"], "20260314")
+        self.assertEqual(rate_limit_mock.call_count, 2)
 
     def test_get_market_stats_skips_rt_k_during_intraday(self) -> None:
         fetcher = self._make_fetcher()

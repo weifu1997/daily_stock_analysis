@@ -1244,6 +1244,49 @@ class TushareFetcher(BaseFetcher):
             "70集中度": round(concentration_70/100, 4)
         }
 
+    def _build_chip_distribution_from_cyq_perf(
+        self,
+        stock_code: str,
+        perf_df: pd.DataFrame,
+        chosen_trade_date: str,
+    ) -> Optional[ChipDistribution]:
+        """Build normalized chip metrics from Tushare cyq_perf summary rows."""
+        if perf_df is None or perf_df.empty:
+            return None
+
+        row = perf_df.iloc[0]
+        required_fields = ("cost_5pct", "cost_95pct", "cost_15pct", "cost_85pct", "weight_avg", "winner_rate")
+        if any(pd.isna(row.get(field)) for field in required_fields):
+            return None
+
+        cost_90_low = float(row.get("cost_5pct") or 0.0)
+        cost_90_high = float(row.get("cost_95pct") or 0.0)
+        cost_70_low = float(row.get("cost_15pct") or 0.0)
+        cost_70_high = float(row.get("cost_85pct") or 0.0)
+
+        def _calc_concentration(low: float, high: float) -> float:
+            if (high + low) == 0:
+                return 0.0
+            return round((high - low) / (high + low), 4)
+
+        winner_rate = float(row.get("winner_rate") or 0.0)
+        if winner_rate > 1:
+            winner_rate = winner_rate / 100.0
+
+        return ChipDistribution(
+            code=normalize_stock_code(stock_code),
+            date=pd.to_datetime(chosen_trade_date).strftime("%Y-%m-%d"),
+            source="tushare_cyq_perf",
+            profit_ratio=round(winner_rate, 4),
+            avg_cost=float(row.get("weight_avg") or 0.0),
+            cost_90_low=cost_90_low,
+            cost_90_high=cost_90_high,
+            concentration_90=_calc_concentration(cost_90_low, cost_90_high),
+            cost_70_low=cost_70_low,
+            cost_70_high=cost_70_high,
+            concentration_70=_calc_concentration(cost_70_low, cost_70_high),
+        )
+
     def get_chip_distribution(self, stock_code: str) -> Optional[ChipDistribution]:
         """获取筹码分布并返回标准化结构。"""
         if self._api is None:
@@ -1260,40 +1303,47 @@ class TushareFetcher(BaseFetcher):
         if trade_dates and trade_date == trade_dates[0] and len(trade_dates) > 1:
             candidate_dates.append(trade_dates[1])
 
-        chips_df = None
-        daily_df = None
-        chosen_trade_date = trade_date
         for index, candidate_date in enumerate(candidate_dates):
+            try:
+                perf_df = self._call_api_with_rate_limit("cyq_perf", ts_code=ts_code, trade_date=candidate_date)
+            except Exception as exc:
+                logger.warning("[Tushare] %s cyq_perf 获取失败，回退 cyq_chips: %s", stock_code, exc)
+                perf_df = None
+            if perf_df is not None and not perf_df.empty:
+                try:
+                    chip = self._build_chip_distribution_from_cyq_perf(stock_code, perf_df, candidate_date)
+                except Exception as exc:
+                    logger.warning("[Tushare] %s cyq_perf 数据异常，回退 cyq_chips: %s", stock_code, exc)
+                    chip = None
+                if chip is not None:
+                    return chip
+
             chips_df = self._call_api_with_rate_limit("cyq_chips", ts_code=ts_code, trade_date=candidate_date)
             if chips_df is not None and not chips_df.empty:
-                chosen_trade_date = candidate_date
                 daily_df = self._call_api_with_rate_limit("daily", ts_code=ts_code, trade_date=candidate_date)
-                break
+                current_price = 0.0
+                if daily_df is not None and not daily_df.empty and "close" in daily_df.columns:
+                    current_price = float(daily_df.iloc[0]["close"])
+
+                metrics = self.compute_cyq_metrics(chips_df, current_price)
+                return ChipDistribution(
+                    code=normalize_stock_code(stock_code),
+                    date=pd.to_datetime(candidate_date).strftime("%Y-%m-%d"),
+                    source="tushare_cyq_chips",
+                    profit_ratio=float(metrics.get("获利比例", 0.0)),
+                    avg_cost=float(metrics.get("平均成本", 0.0)),
+                    cost_90_low=float(metrics.get("90成本-低", 0.0)),
+                    cost_90_high=float(metrics.get("90成本-高", 0.0)),
+                    concentration_90=float(metrics.get("90集中度", 0.0)),
+                    cost_70_low=float(metrics.get("70成本-低", 0.0)),
+                    cost_70_high=float(metrics.get("70成本-高", 0.0)),
+                    concentration_70=float(metrics.get("70集中度", 0.0)),
+                )
 
             if index == 0 and len(candidate_dates) > 1:
                 logger.info("[Tushare] %s 当天筹码为空，回退前一交易日 %s", stock_code, candidate_dates[1])
 
-        if chips_df is None or chips_df.empty:
-            return None
-
-        current_price = 0.0
-        if daily_df is not None and not daily_df.empty and "close" in daily_df.columns:
-            current_price = float(daily_df.iloc[0]["close"])
-
-        metrics = self.compute_cyq_metrics(chips_df, current_price)
-        return ChipDistribution(
-            code=normalize_stock_code(stock_code),
-            date=pd.to_datetime(chosen_trade_date).strftime("%Y-%m-%d"),
-            source="tushare",
-            profit_ratio=float(metrics.get("获利比例", 0.0)),
-            avg_cost=float(metrics.get("平均成本", 0.0)),
-            cost_90_low=float(metrics.get("90成本-低", 0.0)),
-            cost_90_high=float(metrics.get("90成本-高", 0.0)),
-            concentration_90=float(metrics.get("90集中度", 0.0)),
-            cost_70_low=float(metrics.get("70成本-低", 0.0)),
-            cost_70_high=float(metrics.get("70成本-高", 0.0)),
-            concentration_70=float(metrics.get("70集中度", 0.0)),
-        )
+        return None
 
 
 

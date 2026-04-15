@@ -1423,7 +1423,8 @@ class DataFetcherManager:
             return None
 
         circuit_breaker = get_chip_circuit_breaker()
-        # 临时验证顺序：优先走 Tushare，便于确认 cyq_chips / token / 权限是否可用
+        # 真实筹码顺序：优先走 Tushare（先 cyq_perf 再 cyq_chips），便于优先拿稳定汇总口径；
+        # 其次尝试 AkShare/东方财富聚合接口，最后再由 OHLCV 估算兜底。
         # 兼容历史拼写 AkShareFetcher / 当前类名 AkshareFetcher 两种写法。
         source_order = [
             ("TushareFetcher", {"TushareFetcher"}, "tushare_chip"),

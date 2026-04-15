@@ -85,6 +85,7 @@ class TestBuildChipStructureFromData(unittest.TestCase):
     def test_from_chip_distribution(self) -> None:
         chip = ChipDistribution(
             code="600519",
+            source="tushare_cyq_perf",
             profit_ratio=0.567,
             avg_cost=1850.5,
             concentration_90=0.12,
@@ -94,6 +95,7 @@ class TestBuildChipStructureFromData(unittest.TestCase):
         self.assertEqual(out["avg_cost"], 1850.5)
         self.assertEqual(out["concentration"], "12.00%")
         self.assertEqual(out["chip_health"], "健康")
+        self.assertEqual(out["source"], "tushare_cyq_perf")
 
     def test_from_dict(self) -> None:
         d = {"profit_ratio": 0.9, "avg_cost": 100.0, "concentration_90": 0.08}
@@ -243,3 +245,57 @@ class TestFillChipStructureIfNeeded(unittest.TestCase):
         cs = result.dashboard["data_perspective"]["chip_structure"]
         self.assertEqual(cs["profit_ratio"], "67.0%")
         self.assertEqual(cs["custom_note"], "LLM added this")
+
+    def test_generic_real_source_is_replaced_with_precise_source(self) -> None:
+        result = self._make_result(
+            dashboard={
+                "data_perspective": {
+                    "chip_structure": {
+                        "profit_ratio": 0,
+                        "avg_cost": 0,
+                        "concentration": 0,
+                        "chip_health": "",
+                        "source": "真实",
+                    }
+                }
+            }
+        )
+        chip = ChipDistribution(
+            code="600519",
+            source="tushare_cyq_perf",
+            profit_ratio=0.67,
+            avg_cost=1850.0,
+            concentration_90=0.11,
+        )
+
+        fill_chip_structure_if_needed(result, chip)
+
+        cs = result.dashboard["data_perspective"]["chip_structure"]
+        self.assertEqual(cs["source"], "tushare_cyq_perf")
+
+    def test_prompt_placeholder_source_is_replaced_with_precise_source(self) -> None:
+        result = self._make_result(
+            dashboard={
+                "data_perspective": {
+                    "chip_structure": {
+                        "profit_ratio": 0,
+                        "avg_cost": 0,
+                        "concentration": 0,
+                        "chip_health": "",
+                        "source": "tushare_cyq_perf/tushare_cyq_chips/akshare/estimated_ohlcv",
+                    }
+                }
+            }
+        )
+        chip = ChipDistribution(
+            code="600519",
+            source="tushare_cyq_perf",
+            profit_ratio=0.67,
+            avg_cost=1850.0,
+            concentration_90=0.11,
+        )
+
+        fill_chip_structure_if_needed(result, chip)
+
+        cs = result.dashboard["data_perspective"]["chip_structure"]
+        self.assertEqual(cs["source"], "tushare_cyq_perf")

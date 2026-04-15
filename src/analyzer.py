@@ -255,7 +255,19 @@ def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> N
         for raw_key in ("profit_ratio_raw", "avg_cost_raw", "concentration_raw", "confidence_raw"):
             if raw_key not in merged and raw_key in filled:
                 merged[raw_key] = filled[raw_key]
-        if merged.get("source") in (None, "", "N/A", "n/a", "NA", "na", "数据缺失"):
+        if merged.get("source") in (
+            None,
+            "",
+            "N/A",
+            "n/a",
+            "NA",
+            "na",
+            "数据缺失",
+            "真实",
+            "real",
+            "真实/estimated_ohlcv",
+            "tushare_cyq_perf/tushare_cyq_chips/akshare/estimated_ohlcv",
+        ):
             merged["source"] = filled.get("source", "estimated")
         if _is_value_placeholder(merged.get("method")):
             merged["method"] = filled.get("method", "truncated_gaussian")
@@ -681,7 +693,7 @@ class GeminiAnalyzer:
                 "avg_cost": 平均成本,
                 "concentration": 筹码集中度,
                 "chip_health": "健康/一般/警惕",
-                "source": "真实/estimated_ohlcv",
+                "source": "tushare_cyq_perf/tushare_cyq_chips/akshare/estimated_ohlcv",
                 "confidence": "0-100%",
                 "method": "数据方法说明"
             }
@@ -834,7 +846,7 @@ class GeminiAnalyzer:
                 "avg_cost": 平均成本,
                 "concentration": 筹码集中度,
                 "chip_health": "健康/一般/警惕",
-                "source": "真实/estimated_ohlcv",
+                "source": "tushare_cyq_perf/tushare_cyq_chips/akshare/estimated_ohlcv",
                 "confidence": "0-100%",
                 "method": "数据方法说明"
             }
