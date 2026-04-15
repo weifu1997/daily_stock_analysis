@@ -202,7 +202,7 @@ class BaseSearchProvider(ABC):
             if key in self._key_errors and self._key_errors[key] > 0:
                 self._key_errors[key] -= 1
     
-    def _record_error(self, key: str) -> None:
+    def _record_error(self, key: str, error_message: Optional[str] = None) -> None:
         """记录错误"""
         with self._state_lock:
             self._key_errors[key] = self._key_errors.get(key, 0) + 1
@@ -243,7 +243,7 @@ class BaseSearchProvider(ABC):
                 self._record_success(api_key)
                 logger.info(f"[{self._name}] 搜索 '{query}' 成功，返回 {len(response.results)} 条结果，耗时 {response.search_time:.2f}s")
             else:
-                self._record_error(api_key)
+                self._record_error(api_key, getattr(response, 'error_message', None))
 
             return response
 
@@ -287,9 +287,64 @@ class TavilySearchProvider(BaseSearchProvider):
     文档：https://docs.tavily.com/
     """
     
+    _CB_FAILURE_THRESHOLD = 3
+    _CB_COOLDOWN_SECONDS = 300
+    _CB_QUOTA_ERROR_HINTS = (
+        "rate limit",
+        "quota",
+        "usage limit",
+        "too many requests",
+        "429",
+    )
+
     def __init__(self, api_keys: List[str]):
         super().__init__(api_keys, "Tavily")
-    
+        self._consecutive_failures = 0
+        self._circuit_open_until: float = 0.0
+
+    @property
+    def is_available(self) -> bool:
+        with self._state_lock:
+            if not self._api_keys:
+                return False
+            if self._consecutive_failures >= self._CB_FAILURE_THRESHOLD and time.time() < self._circuit_open_until:
+                return False
+            return True
+
+    @staticmethod
+    def _is_quota_error(error_message: Optional[str]) -> bool:
+        text = (error_message or "").lower()
+        return any(hint in text for hint in TavilySearchProvider._CB_QUOTA_ERROR_HINTS)
+
+    def _record_success(self, key: str) -> None:
+        with self._state_lock:
+            super()._record_success(key)
+            self._consecutive_failures = 0
+            self._circuit_open_until = 0.0
+
+    def _record_error(self, key: str, error_message: Optional[str] = None) -> None:
+        warning_message = None
+        with self._state_lock:
+            super()._record_error(key, error_message)
+            self._consecutive_failures += 1
+            quota_error = self._is_quota_error(error_message)
+            if quota_error:
+                self._circuit_open_until = time.time() + self._CB_COOLDOWN_SECONDS
+                self._consecutive_failures = self._CB_FAILURE_THRESHOLD
+                warning_message = (
+                    f"[Tavily] Circuit breaker OPEN – quota/rate-limit error detected, "
+                    f"cooldown {self._CB_COOLDOWN_SECONDS}s"
+                )
+            elif self._consecutive_failures >= self._CB_FAILURE_THRESHOLD:
+                self._circuit_open_until = time.time() + self._CB_COOLDOWN_SECONDS
+                warning_message = (
+                    f"[Tavily] Circuit breaker OPEN – "
+                    f"{self._consecutive_failures} consecutive failures, "
+                    f"cooldown {self._CB_COOLDOWN_SECONDS}s"
+                )
+        if warning_message:
+            logger.warning(warning_message)
+
     def _do_search(
         self,
         query: str,
@@ -354,7 +409,7 @@ class TavilySearchProvider(BaseSearchProvider):
         except Exception as e:
             error_msg = str(e)
             # 检查是否是配额问题
-            if 'rate limit' in error_msg.lower() or 'quota' in error_msg.lower():
+            if 'rate limit' in error_msg.lower() or 'quota' in error_msg.lower() or 'usage limit' in error_msg.lower():
                 error_msg = f"API 配额已用尽: {error_msg}"
             
             return SearchResponse(
@@ -373,6 +428,15 @@ class TavilySearchProvider(BaseSearchProvider):
         topic: Optional[str] = None,
     ) -> SearchResponse:
         """执行 Tavily 搜索，可按调用方选择是否启用新闻 topic。"""
+        if not self.is_available:
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider=self._name,
+                success=False,
+                error_message="tavily_circuit_open",
+            )
+
         if topic is None:
             return super().search(query, max_results=max_results, days=days)
 
@@ -395,12 +459,12 @@ class TavilySearchProvider(BaseSearchProvider):
                 self._record_success(api_key)
                 logger.info(f"[{self._name}] 搜索 '{query}' 成功，返回 {len(response.results)} 条结果，耗时 {response.search_time:.2f}s")
             else:
-                self._record_error(api_key)
+                self._record_error(api_key, getattr(response, 'error_message', None))
 
             return response
 
         except Exception as e:
-            self._record_error(api_key)
+            self._record_error(api_key, str(e))
             elapsed = time.time() - start_time
             logger.error(f"[{self._name}] 搜索 '{query}' 失败: {e}")
             return SearchResponse(
@@ -1106,10 +1170,10 @@ class MiniMaxSearchProvider(BaseSearchProvider):
             self._consecutive_failures = 0
             self._circuit_open_until = 0.0
 
-    def _record_error(self, key: str) -> None:
+    def _record_error(self, key: str, error_message: Optional[str] = None) -> None:
         warning_message = None
         with self._state_lock:
-            super()._record_error(key)
+            super()._record_error(key, error_message)
             self._consecutive_failures += 1
             if self._consecutive_failures >= self._CB_FAILURE_THRESHOLD:
                 self._circuit_open_until = time.time() + self._CB_COOLDOWN_SECONDS
