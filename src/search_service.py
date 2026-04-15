@@ -116,6 +116,7 @@ class SearchResult:
     url: str
     source: str  # 来源网站
     published_date: Optional[str] = None
+    extra: Optional[Dict[str, Any]] = None
     
     def to_text(self) -> str:
         """转换为文本格式"""
@@ -397,6 +398,7 @@ class TavilySearchProvider(BaseSearchProvider):
                     url=item.get('url', ''),
                     source=self._extract_domain(item.get('url', '')),
                     published_date=SearchService.extract_date_value(item),  # 统一日期字段提取
+                    extra={"raw_key_summary": SearchService._summarize_raw_keys(item)},
                 ))
             
             return SearchResponse(
@@ -608,7 +610,8 @@ class SerpAPISearchProvider(BaseSearchProvider):
                     title=f"[知识图谱] {title}",
                     snippet=snippet,
                     url=kg.get('source', {}).get('link', ''),
-                    source="Google Knowledge Graph"
+                    source="Google Knowledge Graph",
+                    extra={"raw_key_summary": SearchService._summarize_raw_keys(kg)},
                 ))
                 
             # 2. 解析 Answer Box (精选回答/行情卡片)
@@ -653,7 +656,8 @@ class SerpAPISearchProvider(BaseSearchProvider):
                         title=f"[精选回答] {ab_title}",
                         snippet=ab_snippet,
                         url=ab.get('link', '') or ab.get('displayed_link', ''),
-                        source="Google Answer Box"
+                        source="Google Answer Box",
+                        extra={"raw_key_summary": SearchService._summarize_raw_keys(ab)},
                     ))
 
             # 3. 解析 Related Questions (相关问题)
@@ -668,7 +672,8 @@ class SerpAPISearchProvider(BaseSearchProvider):
                         title=f"[相关问题] {question}",
                         snippet=snippet,
                         url=link,
-                        source="Google Related Questions"
+                        source="Google Related Questions",
+                        extra={"raw_key_summary": SearchService._summarize_raw_keys(rq)},
                      ))
 
             # 4. 解析 Organic Results (自然搜索结果)
@@ -707,6 +712,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
                     url=link,
                     source=item.get('source', self._extract_domain(link)),
                     published_date=SearchService.extract_date_value(item),
+                    extra={"raw_key_summary": SearchService._summarize_raw_keys(item)},
                 ))
 
             return SearchResponse(
@@ -1071,6 +1077,7 @@ class BochaSearchProvider(BaseSearchProvider):
                     url=item.get('url', ''),
                     source=item.get('siteName') or self._extract_domain(item.get('url', '')),
                     published_date=SearchService.extract_date_value(item),  # 统一日期字段提取
+                    extra={"raw_key_summary": SearchService._summarize_raw_keys(item)},
                 ))
             
             logger.info(f"[Bocha] 成功解析 {len(results)} 条结果")
@@ -1295,6 +1302,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
                     url=item.get('link', ''),
                     source=self._extract_domain(item.get('link', '')),
                     published_date=date_val,
+                    extra={"raw_key_summary": SearchService._summarize_raw_keys(item)},
                 ))
 
                 if len(results) >= max_results:
@@ -1463,6 +1471,7 @@ class BraveSearchProvider(BaseSearchProvider):
                     url=item.get('url', ''),
                     source=self._extract_domain(item.get('url', '')),
                     published_date=SearchService.extract_date_value(item),  # 统一日期字段提取
+                    extra={"raw_key_summary": SearchService._summarize_raw_keys(item)},
                 ))
 
             logger.info(f"[Brave] 成功解析 {len(results)} 条结果")
@@ -1826,8 +1835,10 @@ class SearXNGSearchProvider(BaseSearchProvider):
                         url=url_val,
                         source=self._extract_domain(url_val),
                         published_date=published_date,
+                        extra={"raw_key_summary": SearchService._summarize_raw_keys(item)},
                     )
                 )
+
                 if len(results) >= max_results:
                     break
 
@@ -2469,6 +2480,7 @@ class SearchService:
                     url=url,
                     source=source,
                     published_date=str(published_date).strip() if published_date else None,
+                    extra={"raw_key_summary": SearchService._summarize_raw_keys(item)},
                 )
             )
 
@@ -2650,6 +2662,51 @@ class SearchService:
         "datePublished", "date", "age", "page_age",
     )
 
+    @staticmethod
+    def _summarize_raw_keys(raw: Any, *, max_keys: int = 16, max_depth: int = 2) -> str:
+        """Summarize raw provider keys for diagnostics.
+
+        Produces a compact, deterministic summary such as:
+        ``title,url,metadata.pubdate,items[].publishedDate``.
+        """
+        if not isinstance(raw, dict):
+            return ""
+
+        keys: List[str] = []
+        seen: set[str] = set()
+
+        def _append(value: str) -> None:
+            if value and value not in seen:
+                seen.add(value)
+                keys.append(value)
+
+        def _walk(obj: Any, prefix: str = "", depth: int = 0) -> None:
+            if not isinstance(obj, dict) or depth > max_depth or len(keys) >= max_keys:
+                return
+            for key, value in obj.items():
+                key_name = str(key)
+                path = f"{prefix}{key_name}" if not prefix else f"{prefix}.{key_name}"
+                _append(path)
+                if len(keys) >= max_keys:
+                    return
+                if isinstance(value, dict):
+                    _walk(value, path, depth + 1)
+                elif isinstance(value, list):
+                    for idx, item in enumerate(value[:3]):
+                        if isinstance(item, dict):
+                            _walk(item, f"{path}[]", depth + 1)
+                        elif item is not None and not isinstance(item, (str, bytes)):
+                            _append(f"{path}[{idx}]")
+                        if len(keys) >= max_keys:
+                            return
+
+        _walk(raw)
+        if not keys:
+            return ""
+        if len(keys) > max_keys:
+            keys = keys[:max_keys] + ["..."]
+        return ",".join(keys)
+
     @classmethod
     def extract_date_value(cls, item: dict) -> Any:
         """Extract the first non-empty date value from a provider result dict.
@@ -2797,6 +2854,7 @@ class SearchService:
 
         filtered: List[SearchResult] = []
         dropped_no_field = 0
+        dropped_no_field_key_summaries: List[str] = []
         dropped_parse_failed = 0
         dropped_old = 0
         dropped_future = 0
@@ -2806,6 +2864,16 @@ class SearchService:
             if published is None:
                 if reason == "no_field":
                     dropped_no_field += 1
+                    raw_key_summary = ""
+                    if isinstance(item.extra, dict):
+                        raw_key_summary = str(
+                            item.extra.get("raw_key_summary")
+                            or item.extra.get("raw_keys")
+                            or item.extra.get("keys")
+                            or ""
+                        ).strip()
+                    if raw_key_summary and raw_key_summary not in dropped_no_field_key_summaries:
+                        dropped_no_field_key_summaries.append(raw_key_summary)
                 else:
                     dropped_parse_failed += 1
                 continue
@@ -2823,6 +2891,7 @@ class SearchService:
                     url=item.url,
                     source=item.source,
                     published_date=published.isoformat(),
+                    extra=item.extra,
                 )
             )
             if len(filtered) >= max_results:
@@ -2830,13 +2899,15 @@ class SearchService:
 
         total_dropped = dropped_no_field + dropped_parse_failed + dropped_old + dropped_future
         if total_dropped:
+            key_summary = " | ".join(dropped_no_field_key_summaries[:3]) if dropped_no_field_key_summaries else ""
             logger.info(
-                "[新闻过滤] %s: provider=%s, total=%s, kept=%s, drop_no_field=%s, drop_parse_failed=%s, drop_old=%s, drop_future=%s, window=[%s,%s]",
+                "[新闻过滤] %s: provider=%s, total=%s, kept=%s, drop_no_field=%s, drop_no_field_keys=%s, drop_parse_failed=%s, drop_old=%s, drop_future=%s, window=[%s,%s]",
                 log_scope,
                 response.provider,
                 len(response.results),
                 len(filtered),
                 dropped_no_field,
+                key_summary or "-",
                 dropped_parse_failed,
                 dropped_old,
                 dropped_future,
@@ -2876,6 +2947,7 @@ class SearchService:
                     published_date=(
                         normalized_date.isoformat() if normalized_date is not None else item.published_date
                     ),
+                    extra=item.extra,
                 )
             )
 

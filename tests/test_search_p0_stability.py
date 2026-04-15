@@ -432,6 +432,45 @@ class TestNormalizeReasonCode(unittest.TestCase):
 # ──────────────────────── P1-4: fallback 停止条件 ────────────────────────
 
 
+class TestDropNoFieldLogging(unittest.TestCase):
+    """P1-3: no_field 日志必须带原始 key 摘要。"""
+
+    def test_logger_includes_raw_key_summary_on_no_field(self):
+        svc = SearchService.__new__(SearchService)
+        svc.FUTURE_TOLERANCE_DAYS = 1
+        svc.news_max_age_days = 3
+        svc._cache_lock = __import__("threading").RLock()
+
+        response = SearchResponse(
+            query="test",
+            results=[
+                SearchResult(
+                    title="无日期新闻",
+                    snippet="snippet",
+                    url="https://example.com/a",
+                    source="mx",
+                    published_date=None,
+                    extra={"raw_key_summary": "title,url,metadata.pubdate"},
+                )
+            ],
+            provider="mx-search",
+            success=True,
+        )
+
+        with self.assertLogs("src.search_service", level="INFO") as cm:
+            filtered = svc._filter_news_response(
+                response,
+                search_days=3,
+                max_results=5,
+                log_scope="600519:mx-search:latest_news",
+            )
+
+        self.assertEqual(filtered.results, [])
+        joined = "\n".join(cm.output)
+        self.assertIn("drop_no_field=1", joined)
+        self.assertIn("drop_no_field_keys=title,url,metadata.pubdate", joined)
+
+
 class TestFallbackStopCondition(unittest.TestCase):
     """P1-4: 非中文场景，第一个 provider 有结果就停止。"""
 
