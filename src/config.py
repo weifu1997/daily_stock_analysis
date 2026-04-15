@@ -1876,23 +1876,24 @@ class Config:
             )
         return normalized
 
-    _VALID_PROVIDER_NAMES = frozenset({
+    _VALID_PROVIDER_ORDER = [
         "mx-search", "searxng", "tavily", "serpapi", "bocha", "brave", "minimax",
-    })
+    ]
+    _VALID_PROVIDER_NAMES = frozenset(_VALID_PROVIDER_ORDER)
 
     @classmethod
     def _parse_provider_priority(cls, value: Optional[str]) -> List[str]:
         """Parse SEARCH_PROVIDER_PRIORITY (comma-separated), keep only valid names, append missing ones."""
         raw = (value or "").strip()
         if not raw:
-            return list(cls._VALID_PROVIDER_NAMES)
+            return list(cls._VALID_PROVIDER_ORDER)
         seen = []
         for name in raw.split(","):
             n = name.strip().lower()
             if n in cls._VALID_PROVIDER_NAMES and n not in seen:
                 seen.append(n)
         # Append any missing providers at the end (preserving original default order)
-        for fallback in cls._VALID_PROVIDER_NAMES:
+        for fallback in cls._VALID_PROVIDER_ORDER:
             if fallback not in seen:
                 seen.append(fallback)
         return seen

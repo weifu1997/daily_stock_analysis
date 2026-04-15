@@ -2060,6 +2060,8 @@ class SearchService:
         for p in self._providers:
             name = str(getattr(p, "name", p.__class__.__name__)).lower()
             providers_by_name[name] = p
+        logger.debug(f"[SORT_DEBUG] priority={self._provider_priority}")
+        logger.debug(f"[SORT_DEBUG] available={list(providers_by_name.keys())}")
         ordered = []
         seen = set()
         for name in self._provider_priority:
