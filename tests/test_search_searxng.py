@@ -99,7 +99,7 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertEqual(result.title, "Test Article")
         self.assertEqual(result.url, "https://example.com/article")
         self.assertEqual(result.snippet, "Summary snippet here")
-        expected_date = datetime.fromisoformat(fresh_date.replace("Z", "+00:00")).strftime("%Y-%m-%d")
+        expected_date = datetime.fromisoformat(fresh_date.replace("Z", "+00:00")).astimezone().date().isoformat()
         self.assertEqual(result.published_date, expected_date)
         self.assertEqual(result.source, "example.com")
 
@@ -122,6 +122,64 @@ class TestSearXNGSearchProvider(unittest.TestCase):
 
         self.assertTrue(resp.success)
         self.assertEqual(resp.results[0].snippet, "Desc text")
+
+    @patch("src.search_service._get_with_retry")
+    def test_self_hosted_extracts_relative_english_date_from_content_when_fields_empty(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "News",
+                        "url": "https://foo.com/page",
+                        "content": "5 days ago · Important company update",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    }
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        fixed_now = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
+        original_normalize = SearchService._normalize_news_publish_date
+        with patch.object(
+            SearchService,
+            "_normalize_news_publish_date",
+            side_effect=lambda value: original_normalize(value, now=fixed_now),
+        ):
+            resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual(resp.results[0].published_date, "2026-04-10")
+
+    @patch("src.search_service._get_with_retry")
+    def test_self_hosted_extracts_relative_chinese_date_from_content_when_fields_empty(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "新闻",
+                        "url": "https://foo.com/page-cn",
+                        "content": "3天前 · 公司披露重要进展",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    }
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        fixed_now = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
+        original_normalize = SearchService._normalize_news_publish_date
+        with patch.object(
+            SearchService,
+            "_normalize_news_publish_date",
+            side_effect=lambda value: original_normalize(value, now=fixed_now),
+        ):
+            resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual(resp.results[0].published_date, "2026-04-12")
 
     @patch("src.search_service._get_with_retry")
     def test_self_hosted_403_returns_specific_error(self, mock_get):
@@ -164,6 +222,283 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertTrue(resp.success)
         self.assertEqual(len(resp.results), 1)
         self.assertEqual(resp.results[0].title, "Valid")
+
+    @patch("src.search_service._get_with_retry")
+    def test_skips_low_quality_placeholder_and_overview_results(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "百家号",
+                        "url": "https://baijiahao.baidu.com/s?id=1",
+                        "content": "We would like to show you a description here but the site won’t allow us.",
+                    },
+                    {
+                        "title": "山东黄金 (600547)_个股概览_股票价格_实时行情_走势图_新闻...",
+                        "url": "https://finscope.example.com/quote/600547",
+                        "content": "FinScope提供山东黄金 (600547)的行情报价、新闻资讯、股评、财报等信息。AI让投资更简单。",
+                    },
+                    {
+                        "title": "顺络电子 36.09 (1.81%)_股票行情_新浪财经_新浪网",
+                        "url": "https://finance.sina.com.cn/realstock/company/sz002138/nc.shtml",
+                        "content": "行情页",
+                    },
+                    {
+                        "title": "shixun/stocksystem0107.sql at master · icreame/shixun · GitHub",
+                        "url": "https://github.com/icreame/shixun/blob/master/stocksystem0107.sql",
+                        "content": "代码仓库结果",
+                    },
+                    {
+                        "title": "重大新闻。 #重大事件 - 抖音",
+                        "url": "https://www.douyin.com/video/123",
+                        "content": "短视频站点壳页",
+                    },
+                    {
+                        "title": "正常新闻",
+                        "url": "https://news.example.com/article",
+                        "content": "5 days ago · Important company update",
+                    },
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        fixed_now = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
+        original_normalize = SearchService._normalize_news_publish_date
+        with patch.object(
+            SearchService,
+            "_normalize_news_publish_date",
+            side_effect=lambda value: original_normalize(value, now=fixed_now),
+        ):
+            resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual(len(resp.results), 1)
+        self.assertEqual(resp.results[0].title, "正常新闻")
+        self.assertEqual(resp.results[0].published_date, "2026-04-10")
+
+    @patch("src.search_service._get_with_retry")
+    def test_skips_social_search_noise_pages(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "Results for \"垃圾关键词\" - Twitter",
+                        "url": "https://x.com/search?q=spam",
+                        "content": "Results on X",
+                    },
+                    {
+                        "title": "Ausgefüllte Kusssecka Porn [ficktreffenː tryhuk．com] Pornhyb ...",
+                        "url": "https://gr.linkedin.com/jobs/spam",
+                        "content": "1 day ago · spam job page",
+                    },
+                    {
+                        "title": "\"彩票大乐透｛官网：854.tw｝.ila\" - Results on X",
+                        "url": "https://x.com/search?q=%E5%BD%A9%E7%A5%A8",
+                        "content": "15 hours ago · 垃圾关键词 results on x",
+                    },
+                    {
+                        "title": "皇冠代理",
+                        "url": "https://spam.example.com/crown-agent",
+                        "content": "博彩代理页",
+                    },
+                    {
+                        "title": "皇冠hga030app 会员注册",
+                        "url": "https://hga030app.com/register",
+                        "content": "博彩注册页",
+                    },
+                    {
+                        "title": "正常风险新闻",
+                        "url": "https://finance.example.com/risk-news",
+                        "content": "2026-04-14 Company risk disclosure",
+                    },
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual(len(resp.results), 1)
+        self.assertEqual(resp.results[0].title, "正常风险新闻")
+
+    @patch("src.search_service._get_with_retry")
+    def test_skips_quote_f10_announcement_and_forum_pages_from_real_samples(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "山东黄金 (600547)_股票行情_走势图—东方财富网",
+                        "url": "https://quote.eastmoney.com/sh600547.html",
+                        "content": "山东黄金(600547)股票的行情走势、五档盘口、逐笔交易等实时行情数据",
+                    },
+                    {
+                        "title": "山东黄金（600547）公告列表 _ 数据中心 _ 东方财富网",
+                        "url": "https://data.eastmoney.com/notices/stock/600547.html",
+                        "content": "公告列表页面",
+                    },
+                    {
+                        "title": "山东黄金 (600547) 最新动态_F10_同花顺金融服务网",
+                        "url": "https://basic.10jqka.com.cn/600547/news.html",
+                        "content": "F10资料页",
+                    },
+                    {
+                        "title": "归根结底还是因为油轮被扣的新闻导致的没有主力敢投怕意外事件_小商品城(600415)股吧_东方财富网股吧",
+                        "url": "https://guba.eastmoney.com/news,600415,123456.html",
+                        "content": "股票论坛社区讨论",
+                    },
+                    {
+                        "title": "正常新闻",
+                        "url": "https://finance.example.com/news/1",
+                        "content": "2026-04-15 公司披露新进展",
+                    },
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual([r.title for r in resp.results], ["正常新闻"])
+
+    @patch("src.search_service._get_with_retry")
+    def test_skips_x_result_pages_with_domain_variants(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": '"欧洲杯2012赛程｛官网：abcde.hk｝.uce" - Results on X',
+                        "url": "https://x.com/search?q=abcde.hk",
+                        "content": "2026-04-13 博彩关键词 results on x",
+                    },
+                    {
+                        "title": "正常风险新闻",
+                        "url": "https://finance.example.com/risk/2",
+                        "content": "2026-04-13 公司收到问询函",
+                    },
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual([r.title for r in resp.results], ["正常风险新闻"])
+
+    @patch("src.search_service._get_with_retry")
+    def test_skips_quote_prediction_and_insider_rumor_pages(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "山东黄金(600547)股票最新价格行情,实时走势图,股价分析预测 - 英为财情",
+                        "url": "https://cn.investing.com/equities/shandong-gold-mining-co-ltd",
+                        "content": "纯行情页",
+                    },
+                    {
+                        "title": "顺络电子最新消息 002138最新消息_新闻公告_重大利好内幕_爱股网",
+                        "url": "https://www.igu888.com/stock/002138",
+                        "content": "重大利好内幕",
+                    },
+                    {
+                        "title": "正常新闻",
+                        "url": "https://finance.example.com/news/3",
+                        "content": "2026-04-15 公司发布公告",
+                    },
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual([r.title for r in resp.results], ["正常新闻"])
+
+    @patch("src.search_service._get_with_retry")
+    def test_does_not_treat_bare_eight_digit_identifier_as_date(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "正常新闻",
+                        "url": "https://finance.example.com/news/4",
+                        "content": "文章编号 20260415，继续跟踪公司进展",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    }
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertIsNone(resp.results[0].published_date)
+
+    @patch("src.search_service._get_with_retry")
+    def test_does_not_drop_non_spam_linkedin_domain_by_domain_only(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "正常新闻",
+                        "url": "https://www.linkedin.com/pulse/company-risk-update-example",
+                        "content": "2026-04-15 Company risk update",
+                    }
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual([r.title for r in resp.results], ["正常新闻"])
+
+    @patch("src.search_service._get_with_retry")
+    def test_does_not_drop_asianfda_title_without_other_noise_markers(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "行业动态-亚洲金融与发展协会",
+                        "url": "https://asianfda.com/article/market-update",
+                        "content": "2026-04-15 正常行业动态内容",
+                    }
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual([r.title for r in resp.results], ["行业动态-亚洲金融与发展协会"])
+
+    @patch("src.search_service._get_with_retry")
+    def test_does_not_drop_igu_title_without_insider_marker(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "顺络电子最新消息_新闻公告_爱股网",
+                        "url": "https://www.igu888.com/stock/002138/news",
+                        "content": "2026-04-15 正常资讯页面",
+                    }
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual([r.title for r in resp.results], ["顺络电子最新消息_新闻公告_爱股网"])
 
     @patch("src.search_service._get_with_retry")
     def test_time_range_mapping(self, mock_get):

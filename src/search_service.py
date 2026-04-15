@@ -1827,14 +1827,24 @@ class SearXNGSearchProvider(BaseSearchProvider):
                     continue
                 snippet = (item.get("content") or item.get("description") or "")[:500]
                 published_date = SearchService.extract_date_value(item)  # 统一日期字段提取
+                if published_date is None or not str(published_date).strip():
+                    published_date = SearchService.extract_date_text_fallback(
+                        item.get("content"),
+                        item.get("description"),
+                        item.get("title"),
+                    )
                 normalized_date = SearchService._normalize_news_publish_date(published_date)
+
+                source = self._extract_domain(url_val)
+                if self._is_low_quality_result(item, snippet=snippet, source=source):
+                    continue
 
                 results.append(
                     SearchResult(
                         title=item.get("title", ""),
                         snippet=snippet,
                         url=url_val,
-                        source=self._extract_domain(url_val),
+                        source=source,
                         published_date=normalized_date.isoformat() if normalized_date else (str(published_date).strip() if published_date else None),
                         extra={"raw_key_summary": SearchService._summarize_raw_keys(item)},
                     )
@@ -1881,6 +1891,81 @@ class SearXNGSearchProvider(BaseSearchProvider):
             return domain or "未知来源"
         except Exception:
             return "未知来源"
+
+    @classmethod
+    def _is_low_quality_result(cls, item: dict, *, snippet: str, source: str) -> bool:
+        title = str(item.get("title") or "").strip()
+        content = str(item.get("content") or item.get("description") or "").strip()
+        url = str(item.get("url") or "")
+        source_lower = str(source or "").lower()
+        title_lower = title.lower()
+        content_lower = content.lower()
+        spam_markers = (
+            "tryhuk",
+            "sex kontakte",
+            "ficktreffen",
+            "porn",
+            "彩票",
+            "大乐透",
+            "kaiyun.bio",
+            "官网：854.tw",
+            "官网:854.tw",
+            "皇冠代理",
+            "皇冠体育",
+            "皇冠體育",
+            "hga",
+            "会员注册",
+            "博彩",
+        )
+
+        if any(marker in title_lower or marker in content_lower or marker in url.lower() for marker in spam_markers):
+            return True
+
+        if title == "百家号" and "we would like to show you a description here" in content_lower:
+            return True
+
+        if "个股概览" in title and any(token in title for token in ("股票价格", "实时行情", "走势图")):
+            return True
+
+        if source_lower.endswith("quote.eastmoney.com") and any(token in title for token in ("股票行情", "走势图", "最新价格", "行情")):
+            return True
+
+        if source_lower.endswith("data.eastmoney.com") and "公告列表" in title:
+            return True
+
+        if source_lower.endswith("basic.10jqka.com.cn") and "f10" in title_lower:
+            return True
+
+        if source_lower.endswith("guba.eastmoney.com") or ("股吧" in title and "股票论坛社区" in content):
+            return True
+
+        if (source_lower.endswith("cn.investing.com") or source_lower.endswith("hk.investing.com")) and any(
+            token in title for token in ("股票最新价格行情", "实时走势图", "股价分析预测")
+        ):
+            return True
+
+        if any(token in title for token in ("重大利好内幕",)):
+            return True
+
+        if "股票行情" in title and ("新浪财经" in title or "新浪网" in title):
+            return True
+
+        if "研究报告正文" in title and "数据中心" in title:
+            return True
+
+        if source_lower.endswith("github.com") and ".sql" in title_lower:
+            return True
+
+        if source_lower.endswith("douyin.com") and ("抖音" in title or "/video/" in url.lower()):
+            return True
+
+        if source_lower.endswith("x.com") and (title_lower.startswith("results") or "results on x" in title_lower):
+            return True
+
+        if source_lower.endswith("linkedin.com") and ("/jobs/" in url.lower() or any(marker in title_lower or marker in content_lower for marker in spam_markers)):
+            return True
+
+        return False
 
     def search(self, query: str, max_results: int = 5, days: int = 7) -> SearchResponse:
         """Execute SearXNG search with instance rotation and per-request failover."""
@@ -2742,6 +2827,33 @@ class SearchService:
             return None
 
         return _scan(item)
+
+    @classmethod
+    def extract_date_text_fallback(cls, *texts: Any) -> Optional[str]:
+        """Extract a date-like snippet from free text when structured fields are empty."""
+        patterns = (
+            re.compile(r"\b\d{1,3}\s*(?:minute|minutes|min|mins|hour|hours|day|days|week|weeks|month|months|year|years)\s+ago\b", re.IGNORECASE),
+            re.compile(r"\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b", re.IGNORECASE),
+            re.compile(r"\b\d{4}\.\d{1,2}\.\d{1,2}\b", re.IGNORECASE),
+            re.compile(r"\d+\s*(?:分钟前|小时前|天前|周前|个月前|月前|年前)", re.IGNORECASE),
+            re.compile(r"\d{4}年\d{1,2}月\d{1,2}日", re.IGNORECASE),
+            re.compile(r"(?:日期|时间|发表于|发布于)\s*[:：]?\s*(\d{8})", re.IGNORECASE),
+        )
+        for text in texts:
+            if text is None:
+                continue
+            normalized = str(text).strip()
+            if not normalized:
+                continue
+            window = normalized[:200]
+            for pattern in patterns:
+                match = pattern.search(window)
+                if not match:
+                    continue
+                if match.lastindex:
+                    return next((group.strip() for group in match.groups() if group), None)
+                return match.group(0).strip()
+        return None
 
     @classmethod
     def _normalize_news_publish_date_with_reason(
