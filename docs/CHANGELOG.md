@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] `_normalize_news_publish_date` 支持注入 `now` 参数，同一分析 run 内时间基准一致。
 - [改进] 所有 provider 统一使用 `extract_date_value` 提取日期字段（兼容 7 种字段名），消除各 provider 独立取值的差异。
 - [改进] 过滤日志拆分 `drop_unknown` 为 `drop_no_field` + `drop_parse_failed`，可区分"无时间字段"和"解析失败"。
+- [修复] 筹码分布链路统一修正 fetcher 名称与盘中/盘后取数逻辑：`AkshareFetcher` / `AkShareFetcher` 别名都可命中，Tushare 盘中优先取前一交易日、盘后优先取当天并在当天为空时自动回退前一交易日。
 - [修复] `AGENT_MAX_STEPS` 在 orchestrator 多 Agent 模式下改为作为各子 Agent 的步数上限而非硬覆盖；TechnicalAgent 等高默认值 Agent 会被封顶，低默认值 Agent 保持原值，减少不必要的 LLM 调用膨胀与配额消耗。
 - [修复] 移除不稳定的 `mx-zixuan` 正式链路与报告拼接逻辑，主流程不再依赖妙想自选同步结果，避免外部接口超时拖慢或干扰正式运行。
 - [修复] **MiniMax-M2.7 模型连接测试支持** — 修复 LLM 通道连接测试在 MiniMax-M2.7 模型下返回 "Empty response" 的问题；增加了 `max_tokens` 上限（8→256）以容纳 MiniMax 思考过程，并添加 `content_blocks` 格式解析逻辑统一处理 MiniMax 响应格式差异。

@@ -1254,25 +1254,40 @@ class TushareFetcher(BaseFetcher):
             return None
 
         trade_dates = self._get_trade_dates()
-        trade_date = self._pick_trade_date(trade_dates, use_today=True)
+        trade_date = self.get_trade_time(early_time='00:00', late_time='15:30')
         if not trade_date:
             logger.warning("[Tushare] 无有效交易日，无法获取筹码分布: %s", stock_code)
             return None
 
         ts_code = self._convert_stock_code(stock_code)
-        chips_df = self._call_api_with_rate_limit("cyq_chips", ts_code=ts_code, trade_date=trade_date)
+        candidate_dates = [trade_date]
+        if trade_dates and trade_date == trade_dates[0] and len(trade_dates) > 1:
+            candidate_dates.append(trade_dates[1])
+
+        chips_df = None
+        daily_df = None
+        chosen_trade_date = trade_date
+        for index, candidate_date in enumerate(candidate_dates):
+            chips_df = self._call_api_with_rate_limit("cyq_chips", ts_code=ts_code, trade_date=candidate_date)
+            if chips_df is not None and not chips_df.empty:
+                chosen_trade_date = candidate_date
+                daily_df = self._call_api_with_rate_limit("daily", ts_code=ts_code, trade_date=candidate_date)
+                break
+
+            if index == 0 and len(candidate_dates) > 1:
+                logger.info("[Tushare] %s 当天筹码为空，回退前一交易日 %s", stock_code, candidate_dates[1])
+
         if chips_df is None or chips_df.empty:
             return None
 
         current_price = 0.0
-        daily_df = self._call_api_with_rate_limit("daily", ts_code=ts_code, trade_date=trade_date)
         if daily_df is not None and not daily_df.empty and "close" in daily_df.columns:
             current_price = float(daily_df.iloc[0]["close"])
 
         metrics = self.compute_cyq_metrics(chips_df, current_price)
         return ChipDistribution(
             code=normalize_stock_code(stock_code),
-            date=pd.to_datetime(trade_date).strftime("%Y-%m-%d"),
+            date=pd.to_datetime(chosen_trade_date).strftime("%Y-%m-%d"),
             source="tushare",
             profit_ratio=float(metrics.get("获利比例", 0.0)),
             avg_cost=float(metrics.get("平均成本", 0.0)),

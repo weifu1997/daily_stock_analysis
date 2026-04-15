@@ -1424,9 +1424,10 @@ class DataFetcherManager:
 
         circuit_breaker = get_chip_circuit_breaker()
         # 临时验证顺序：优先走 Tushare，便于确认 cyq_chips / token / 权限是否可用
+        # 兼容历史拼写 AkShareFetcher / 当前类名 AkshareFetcher 两种写法。
         source_order = [
-            ("TushareFetcher", "tushare_chip"),
-            ("AkShareFetcher", "akshare_chip"),
+            ("TushareFetcher", {"TushareFetcher"}, "tushare_chip"),
+            ("AkshareFetcher", {"AkshareFetcher", "AkShareFetcher"}, "akshare_chip"),
         ]
 
         def _record_chip_event(source: str, status: str, reason: str = "") -> None:
@@ -1436,13 +1437,16 @@ class DataFetcherManager:
                 pass
 
         # 先尝试真实筹码源
-        for fetcher_name, source_key in source_order:
+        for fetcher_name, fetcher_names, source_key in source_order:
             if not circuit_breaker.is_available(source_key):
                 logger.debug(f"[熔断] {fetcher_name} 筹码接口处于熔断状态，尝试下一个")
                 _record_chip_event(fetcher_name, "circuit_breaker", "unavailable")
                 continue
 
-            fetcher = next((f for f in self._get_fetchers_snapshot() if getattr(f, 'name', '') == fetcher_name), None)
+            fetcher = next(
+                (f for f in self._get_fetchers_snapshot() if getattr(f, 'name', '') in fetcher_names),
+                None,
+            )
             if fetcher is None:
                 _record_chip_event(fetcher_name, "missing", "fetcher_not_installed")
                 continue
@@ -1463,7 +1467,7 @@ class DataFetcherManager:
                 err = str(e)
                 if fetcher_name == "TushareFetcher":
                     reason = "permission_or_api_error"
-                elif fetcher_name == "AkShareFetcher":
+                elif fetcher_name == "AkshareFetcher":
                     reason = "network_or_remote_disconnect"
                 circuit_breaker.record_failure(source_key, err)
                 _record_chip_event(fetcher_name, "failed", f"{reason}: {err}")
