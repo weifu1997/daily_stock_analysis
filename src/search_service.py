@@ -1827,6 +1827,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
                     continue
                 snippet = (item.get("content") or item.get("description") or "")[:500]
                 published_date = SearchService.extract_date_value(item)  # 统一日期字段提取
+                normalized_date = SearchService._normalize_news_publish_date(published_date)
 
                 results.append(
                     SearchResult(
@@ -1834,7 +1835,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
                         snippet=snippet,
                         url=url_val,
                         source=self._extract_domain(url_val),
-                        published_date=published_date,
+                        published_date=normalized_date.isoformat() if normalized_date else (str(published_date).strip() if published_date else None),
                         extra={"raw_key_summary": SearchService._summarize_raw_keys(item)},
                     )
                 )
