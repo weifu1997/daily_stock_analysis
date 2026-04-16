@@ -13,6 +13,7 @@ A股自选股智能分析系统 - AI分析层
 import json
 import logging
 import math
+import re
 import time
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Tuple, Callable
@@ -64,6 +65,52 @@ class _LiteLLMStreamError(RuntimeError):
     def __init__(self, message: str, *, partial_received: bool = False):
         super().__init__(message)
         self.partial_received = partial_received
+
+
+def _build_llm_response_preview(response_text: str, limit: int = 300) -> str:
+    """Build a log-safe preview that prefers parseable JSON over scratchpad preambles."""
+    text = (response_text or "").strip()
+    if not text:
+        return ""
+
+    def _parse_json_candidate(candidate: str) -> Optional[str]:
+        candidate = (candidate or "").strip()
+        if not candidate:
+            return None
+        try:
+            parsed = json.loads(candidate)
+            return json.dumps(parsed, ensure_ascii=False)
+        except Exception:
+            return None
+
+    json_fence_match = re.search(r"```json\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if json_fence_match:
+        parsed_candidate = _parse_json_candidate(json_fence_match.group(1))
+        if parsed_candidate:
+            text = parsed_candidate
+        else:
+            text = re.sub(r"```.*?```", "", text, flags=re.DOTALL).strip()
+    else:
+        json_start = min(
+            [idx for idx in (text.find("{"), text.find("[")) if idx >= 0],
+            default=-1,
+        )
+        if json_start >= 0:
+            parsed_candidate = _parse_json_candidate(text[json_start:])
+            if parsed_candidate:
+                text = parsed_candidate
+        text = re.sub(r"```.*?```", "", text, flags=re.DOTALL).strip()
+
+    if not text.startswith(("{", "[")):
+        first_cjk_match = re.search(r"[\u4e00-\u9fff]", text)
+        if first_cjk_match and first_cjk_match.start() > 0:
+            prefix = text[: first_cjk_match.start()]
+            if re.search(r"[A-Za-z]", prefix):
+                text = text[first_cjk_match.start() :].strip()
+
+    if len(text) > limit:
+        return text[:limit] + "..."
+    return text
 
 
 def check_content_integrity(result: "AnalysisResult") -> Tuple[bool, List[str]]:
@@ -1694,7 +1741,7 @@ class GeminiAnalyzer:
                 logger.info(
                     f"[LLM返回] {model_name} 响应成功, 耗时 {elapsed:.2f}s, 响应长度 {len(response_text)} 字符"
                 )
-                response_preview = response_text[:300] + "..." if len(response_text) > 300 else response_text
+                response_preview = _build_llm_response_preview(response_text, limit=300)
                 logger.info(f"[LLM返回 预览]\n{response_preview}")
                 logger.debug(
                     f"=== {model_name} 完整响应 ({len(response_text)}字符) ===\n{response_text}\n=== End Response ==="

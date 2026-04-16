@@ -8,6 +8,7 @@ Covers:
 - Any provider configuration (Gemini / Anthropic / OpenAI / LLM_CHANNELS)
   does NOT trigger AttributeError (regression guard for the old bypass bug)
 """
+import logging
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -130,6 +131,49 @@ class TestAnalyzerGenerateText:
         assert text == "推理段正文"
         assert model == "gemini/gemini-2.0-flash"
         assert usage == {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+
+    def test_build_llm_response_preview_skips_english_scratchpad_before_json(self):
+        from src.analyzer import _build_llm_response_preview
+
+        response_text = """**Analyzing stock conditions**
+
+I'm working on a technical analysis summary and must keep the final answer in Chinese.
+```json
+{"analysis_summary": "中文结论", "operation_advice": "观望"}
+```
+"""
+
+        preview = _build_llm_response_preview(response_text, limit=120)
+
+        assert "Analyzing stock conditions" not in preview
+        assert "I'm working on" not in preview
+        assert preview.startswith('{"analysis_summary"')
+        assert "中文结论" in preview
+
+    def test_build_llm_response_preview_preserves_plain_text_with_brackets_when_no_valid_json(self):
+        from src.analyzer import _build_llm_response_preview
+
+        response_text = "观察区间[20, 25]内量价一般，{这不是JSON，只是说明}，先等右侧。"
+
+        preview = _build_llm_response_preview(response_text, limit=120)
+
+        assert preview == response_text
+
+    def test_build_llm_response_preview_does_not_prefer_non_json_code_fence(self):
+        from src.analyzer import _build_llm_response_preview
+
+        response_text = """分析如下：
+```text
+Step 1: think harder
+```
+结论：先观望，等待放量确认。
+"""
+
+        preview = _build_llm_response_preview(response_text, limit=120)
+
+        assert "Step 1: think harder" not in preview
+        assert preview.startswith("分析如下：")
+        assert "结论：先观望" in preview
 
     def test_call_litellm_stream_falls_back_to_non_stream_before_first_chunk(self):
         analyzer = self._make_analyzer()
@@ -284,6 +328,50 @@ class TestAnalyzerGenerateText:
         assert [progress for progress, _ in progress_updates] == [68, 93, 94, 95]
         assert "补全重试" in progress_updates[2][1]
         assert "解析 JSON" in progress_updates[3][1]
+
+    def test_analyze_logs_sanitized_llm_preview_without_english_scratchpad(self, caplog):
+        analyzer = self._make_analyzer()
+        analyzer._config_override = SimpleNamespace(
+            gemini_request_delay=0,
+            report_language="zh",
+            litellm_model="gemini/gemini-2.0-flash",
+            llm_temperature=0.2,
+            report_integrity_enabled=False,
+            report_integrity_retry=0,
+        )
+
+        from src.analyzer import AnalysisResult
+
+        response_text = """**Analyzing stock conditions**
+
+I'm working on a technical analysis summary and must keep the final answer in Chinese.
+```json
+{"analysis_summary": "中文结论", "operation_advice": "观望", "sentiment_score": 55}
+```
+"""
+        parsed = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=55,
+            trend_prediction="震荡",
+            operation_advice="观望",
+            analysis_summary="中文结论",
+        )
+
+        with patch.object(analyzer, "is_available", return_value=True), \
+             patch.object(analyzer, "_get_analysis_system_prompt", return_value="system"), \
+             patch.object(analyzer, "_format_prompt", return_value="prompt"), \
+             patch.object(analyzer, "_call_litellm", return_value=(response_text, "model-a", {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})), \
+             patch.object(analyzer, "_parse_response", return_value=parsed), \
+             patch.object(analyzer, "_build_market_snapshot", return_value={}), \
+             patch("src.analyzer.persist_llm_usage"):
+            with caplog.at_level(logging.INFO):
+                result = analyzer.analyze({"code": "600519", "stock_name": "贵州茅台"})
+
+        assert result.analysis_summary == "中文结论"
+        assert '[LLM返回 预览]\n{"analysis_summary": "中文结论", "operation_advice": "观望", "sentiment_score": 55}' in caplog.text
+        assert "Analyzing stock conditions" not in caplog.text
+        assert "I'm working on a technical analysis summary" not in caplog.text
 
     def test_parse_response_non_json_returns_failure(self):
         """_parse_response must return success=False when LLM output is not valid JSON."""
