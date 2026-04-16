@@ -73,6 +73,29 @@ class TestFundamentalAdapter(unittest.TestCase):
         self.assertTrue(result["is_on_list"])
         self.assertGreaterEqual(result["recent_count"], 1)
 
+    def test_collect_institution_payload_skips_broken_or_mismatched_top10_candidates(self) -> None:
+        adapter = AkshareFundamentalAdapter()
+        inst_df = pd.DataFrame(
+            {
+                "证券代码": ["600519"],
+                "机构数变化": [2],
+                "持股比例增幅": [1.5],
+            }
+        )
+        with patch.object(
+            adapter,
+            "_call_df_candidates",
+            side_effect=[
+                (inst_df, "stock_institute_hold", []),
+            ],
+        ):
+            result = adapter.get_institution_data("600519")
+
+        self.assertEqual(result["institution"].get("institution_holding_change"), 2.0)
+        self.assertNotIn("top10_holder_change", result["institution"])
+        self.assertNotIn("top10:stock_gdfx_top_10_em", result["source_chain"])
+        self.assertEqual(result["errors"], [])
+
     def test_fundamental_bundle_includes_financial_report_and_dividend_payload(self) -> None:
         adapter = AkshareFundamentalAdapter()
         now = datetime.now()

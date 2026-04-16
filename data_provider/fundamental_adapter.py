@@ -299,7 +299,6 @@ class AkshareFundamentalAdapter:
 
         inst_df, inst_source, inst_errors = self._call_df_candidates([
             ("stock_institute_hold", {}),
-            ("stock_institute_recommend", {}),
         ])
         result["errors"].extend(inst_errors)
         if inst_df is not None:
@@ -310,20 +309,10 @@ class AkshareFundamentalAdapter:
                     result["institution"]["institution_holding_change"] = inst_change
                 result["source_chain"].append(f"institution:{inst_source}")
 
-        top10_df, top10_source, top10_errors = self._call_df_candidates([
-            ("stock_gdfx_top_10_em", {"symbol": stock_code}),
-            ("stock_gdfx_top_10_em", {}),
-            ("stock_zh_a_gdhs_detail_em", {"symbol": stock_code}),
-            ("stock_zh_a_gdhs_detail_em", {}),
-        ])
-        result["errors"].extend(top10_errors)
-        if top10_df is not None:
-            row = _extract_latest_row(top10_df, stock_code)
-            if row is not None:
-                holder_change = _safe_float(_pick_by_keywords(row, ["增减", "变化", "持股变化", "变动"]))
-                if holder_change is not None:
-                    result["institution"]["top10_holder_change"] = holder_change
-                result["source_chain"].append(f"top10:{top10_source}")
+        # Top10 shareholder source is temporarily disabled: current AkShare endpoints are
+        # either structurally broken (`stock_gdfx_top_10_em(symbol=...)` -> KeyError)
+        # or semantically unsafe to map to a single stock (`*_all` / 股东户数明细).
+        # Prefer missing data over contaminated data until a reliable provider is available.
 
         if result["institution"]:
             result["status"] = "ok"
