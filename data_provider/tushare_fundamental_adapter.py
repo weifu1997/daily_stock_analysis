@@ -86,6 +86,94 @@ class TushareFundamentalAdapter:
             "actual_date": _normalize_report_date(row.get("actual_date")),
         }
 
+    @staticmethod
+    def _sum_hold_change(df: Optional[pd.DataFrame]) -> Optional[float]:
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty or "hold_change" not in df.columns:
+            return None
+        work_df = df.copy()
+        if "end_date" in work_df.columns:
+            latest_end = work_df["end_date"].astype(str).max()
+            work_df = work_df[work_df["end_date"].astype(str) == latest_end]
+        if "ann_date" in work_df.columns:
+            latest_ann = work_df["ann_date"].astype(str).max()
+            work_df = work_df[work_df["ann_date"].astype(str) == latest_ann]
+        series = pd.to_numeric(work_df["hold_change"], errors="coerce").dropna()
+        if series.empty:
+            return None
+        return float(series.sum())
+
+    @staticmethod
+    def _build_holdernumber_payload(df: Optional[pd.DataFrame]) -> Dict[str, Any]:
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            return {}
+        work_df = df.copy()
+        for col in ("end_date", "ann_date"):
+            if col in work_df.columns:
+                work_df = work_df.sort_values(col, ascending=False, na_position="last")
+                break
+        latest = work_df.iloc[0]
+        latest_num = _safe_float(latest.get("holder_num"))
+        if latest_num is None:
+            return {}
+        payload: Dict[str, Any] = {
+            "holder_num": int(latest_num),
+            "holder_num_end_date": _normalize_report_date(latest.get("end_date")),
+            "holder_num_ann_date": _normalize_report_date(latest.get("ann_date")),
+        }
+        if len(work_df) > 1:
+            prev_num = _safe_float(work_df.iloc[1].get("holder_num"))
+            if prev_num is not None:
+                payload["holder_num_change"] = int(latest_num - prev_num)
+        return payload
+
+    def get_institution_data(self, stock_code: str) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "status": "not_supported",
+            "institution": {},
+            "source_chain": [],
+            "errors": [],
+        }
+        if not self._fetcher.is_available():
+            result["errors"].append("tushare_unavailable")
+            return result
+
+        top10_df = None
+        top10_float_df = None
+        holdernumber_df = None
+        try:
+            top10_df = self._fetcher.get_top10_holders_df(stock_code)
+        except Exception as exc:
+            result["errors"].append(f"top10_holders:{type(exc).__name__}")
+        try:
+            top10_float_df = self._fetcher.get_top10_floatholders_df(stock_code)
+        except Exception as exc:
+            result["errors"].append(f"top10_floatholders:{type(exc).__name__}")
+        try:
+            holdernumber_df = self._fetcher.get_stk_holdernumber_df(stock_code)
+        except Exception as exc:
+            result["errors"].append(f"stk_holdernumber:{type(exc).__name__}")
+
+        top10_change = self._sum_hold_change(top10_df)
+        if top10_change is not None:
+            result["institution"]["top10_holder_change"] = top10_change
+            result["source_chain"].append("top10_holders:tushare_top10_holders")
+
+        top10_float_change = self._sum_hold_change(top10_float_df)
+        if top10_float_change is not None:
+            result["institution"]["top10_float_holder_change"] = top10_float_change
+            result["source_chain"].append("top10_floatholders:tushare_top10_floatholders")
+
+        holdernumber_payload = self._build_holdernumber_payload(holdernumber_df)
+        if holdernumber_payload:
+            result["institution"].update(holdernumber_payload)
+            result["source_chain"].append("holder_num:tushare_stk_holdernumber")
+
+        if result["institution"]:
+            result["status"] = "ok"
+        elif result["errors"]:
+            result["status"] = "partial"
+        return result
+
     def get_fundamental_bundle(self, stock_code: str) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "status": "not_supported",

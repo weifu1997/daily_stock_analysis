@@ -35,13 +35,42 @@ class CompositeFundamentalAdapter:
         }
 
     def get_institution_data(self, stock_code: str) -> Dict[str, Any]:
-        if self._secondary and hasattr(self._secondary, "get_institution_data"):
-            return self._secondary.get_institution_data(stock_code)
+        primary_result = self._primary.get_institution_data(stock_code) if self._primary and hasattr(self._primary, "get_institution_data") else {}
+        secondary_result = self._secondary.get_institution_data(stock_code) if self._secondary and hasattr(self._secondary, "get_institution_data") else {}
+
+        primary_institution = primary_result.get("institution", {}) if isinstance(primary_result, dict) else {}
+        secondary_institution = secondary_result.get("institution", {}) if isinstance(secondary_result, dict) else {}
+        merged_institution = _merge_scalar_dict(primary_institution, secondary_institution)
+
+        source_chain: List[Any] = []
+        for chain in (
+            primary_result.get("source_chain", []) if isinstance(primary_result, dict) else [],
+            secondary_result.get("source_chain", []) if isinstance(secondary_result, dict) else [],
+        ):
+            for item in chain:
+                if item not in source_chain:
+                    source_chain.append(item)
+
+        errors: List[Any] = []
+        for err_list in (
+            primary_result.get("errors", []) if isinstance(primary_result, dict) else [],
+            secondary_result.get("errors", []) if isinstance(secondary_result, dict) else [],
+        ):
+            for item in err_list:
+                if item not in errors:
+                    errors.append(item)
+
+        has_content = bool(merged_institution)
+        errors = errors or (["institution_provider_unavailable"] if not (self._primary or self._secondary) else [])
         return {
-            "status": "not_supported",
-            "institution": {},
-            "source_chain": [],
-            "errors": ["institution_provider_unavailable"],
+            "status": self._merge_status(
+                primary_result.get("status") if isinstance(primary_result, dict) else None,
+                secondary_result.get("status") if isinstance(secondary_result, dict) else None,
+                has_content,
+            ),
+            "institution": merged_institution,
+            "source_chain": source_chain,
+            "errors": errors,
         }
 
     def get_dragon_tiger_flag(self, stock_code: str, lookback_days: int = 20) -> Dict[str, Any]:

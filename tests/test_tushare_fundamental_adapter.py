@@ -118,7 +118,193 @@ class TestTushareFundamentalAdapter(unittest.TestCase):
         self.assertIn("disclosure_date:tushare_disclosure_date", result["source_chain"])
 
 
+    def test_tushare_institution_adapter_fail_opens_when_one_endpoint_errors(self) -> None:
+        from data_provider.tushare_fundamental_adapter import TushareFundamentalAdapter
+
+        top10_df = pd.DataFrame([
+            {"ts_code": "002906.SZ", "ann_date": "20260328", "end_date": "20251231", "hold_change": 1200.0},
+            {"ts_code": "002906.SZ", "ann_date": "20260328", "end_date": "20251231", "hold_change": -200.0},
+        ])
+        holdernumber_df = pd.DataFrame([
+            {"ts_code": "002906.SZ", "ann_date": "20260415", "end_date": "20260410", "holder_num": 41060},
+            {"ts_code": "002906.SZ", "ann_date": "20260331", "end_date": "20260320", "holder_num": 42000},
+        ])
+
+        fetcher = MagicMock()
+        fetcher.is_available.return_value = True
+        fetcher.get_top10_holders_df.return_value = top10_df
+        fetcher.get_top10_floatholders_df.side_effect = RuntimeError("boom")
+        fetcher.get_stk_holdernumber_df.return_value = holdernumber_df
+
+        adapter = TushareFundamentalAdapter(fetcher=fetcher)
+        result = adapter.get_institution_data("002906")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["institution"]["top10_holder_change"], 1000.0)
+        self.assertEqual(result["institution"]["holder_num"], 41060)
+        self.assertNotIn("top10_float_holder_change", result["institution"])
+        self.assertTrue(any("top10_floatholders" in err for err in result["errors"]))
+
+    def test_tushare_adapter_aggregates_top10_change_on_latest_period_only(self) -> None:
+        from data_provider.tushare_fundamental_adapter import TushareFundamentalAdapter
+
+        top10_df = pd.DataFrame(
+            [
+                {"ts_code": "002906.SZ", "ann_date": "20260328", "end_date": "20251231", "hold_change": 1200.0},
+                {"ts_code": "002906.SZ", "ann_date": "20260328", "end_date": "20251231", "hold_change": -200.0},
+                {"ts_code": "002906.SZ", "ann_date": "20251020", "end_date": "20250930", "hold_change": 5000.0},
+            ]
+        )
+        float_top10_df = pd.DataFrame(
+            [
+                {"ts_code": "002906.SZ", "ann_date": "20260328", "end_date": "20251231", "hold_change": 800.0},
+                {"ts_code": "002906.SZ", "ann_date": "20260328", "end_date": "20251231", "hold_change": -100.0},
+                {"ts_code": "002906.SZ", "ann_date": "20251020", "end_date": "20250930", "hold_change": 9000.0},
+            ]
+        )
+        holdernumber_df = pd.DataFrame([
+            {"ts_code": "002906.SZ", "ann_date": "20260415", "end_date": "20260410", "holder_num": 41060},
+            {"ts_code": "002906.SZ", "ann_date": "20260331", "end_date": "20260320", "holder_num": 42000},
+        ])
+
+        fetcher = MagicMock()
+        fetcher.is_available.return_value = True
+        fetcher.get_top10_holders_df.return_value = top10_df
+        fetcher.get_top10_floatholders_df.return_value = float_top10_df
+        fetcher.get_stk_holdernumber_df.return_value = holdernumber_df
+
+        adapter = TushareFundamentalAdapter(fetcher=fetcher)
+        result = adapter.get_institution_data("002906")
+
+        self.assertEqual(result["institution"]["top10_holder_change"], 1000.0)
+        self.assertEqual(result["institution"]["top10_float_holder_change"], 700.0)
+
+    def test_tushare_adapter_builds_institution_payload_from_top10_and_holdernumber(self) -> None:
+        from data_provider.tushare_fundamental_adapter import TushareFundamentalAdapter
+
+        top10_df = pd.DataFrame(
+            [
+                {
+                    "ts_code": "002906.SZ",
+                    "ann_date": "20260328",
+                    "end_date": "20251231",
+                    "holder_name": "江苏华越投资有限公司",
+                    "hold_change": 1200.0,
+                },
+                {
+                    "ts_code": "002906.SZ",
+                    "ann_date": "20260328",
+                    "end_date": "20251231",
+                    "holder_name": "中证500ETF",
+                    "hold_change": -200.0,
+                },
+            ]
+        )
+        float_top10_df = pd.DataFrame(
+            [
+                {
+                    "ts_code": "002906.SZ",
+                    "ann_date": "20260328",
+                    "end_date": "20251231",
+                    "holder_name": "江苏华越投资有限公司",
+                    "hold_change": 800.0,
+                },
+                {
+                    "ts_code": "002906.SZ",
+                    "ann_date": "20260328",
+                    "end_date": "20251231",
+                    "holder_name": "中证500ETF",
+                    "hold_change": -100.0,
+                },
+            ]
+        )
+        holdernumber_df = pd.DataFrame(
+            [
+                {
+                    "ts_code": "002906.SZ",
+                    "ann_date": "20260415",
+                    "end_date": "20260410",
+                    "holder_num": 41060,
+                },
+                {
+                    "ts_code": "002906.SZ",
+                    "ann_date": "20260331",
+                    "end_date": "20260320",
+                    "holder_num": 42000,
+                },
+            ]
+        )
+
+        fetcher = MagicMock()
+        fetcher.is_available.return_value = True
+        fetcher.get_top10_holders_df.return_value = top10_df
+        fetcher.get_top10_floatholders_df.return_value = float_top10_df
+        fetcher.get_stk_holdernumber_df.return_value = holdernumber_df
+
+        adapter = TushareFundamentalAdapter(fetcher=fetcher)
+        result = adapter.get_institution_data("002906")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["institution"]["top10_holder_change"], 1000.0)
+        self.assertEqual(result["institution"]["top10_float_holder_change"], 700.0)
+        self.assertEqual(result["institution"]["holder_num"], 41060)
+        self.assertEqual(result["institution"]["holder_num_change"], -940)
+        self.assertEqual(result["institution"]["holder_num_end_date"], "2026-04-10")
+        self.assertIn("top10_holders:tushare_top10_holders", result["source_chain"])
+        self.assertIn("top10_floatholders:tushare_top10_floatholders", result["source_chain"])
+        self.assertIn("holder_num:tushare_stk_holdernumber", result["source_chain"])
+
+
 class TestCompositeFundamentalAdapter(unittest.TestCase):
+    def test_composite_institution_reports_provider_unavailable_when_both_missing(self) -> None:
+        from data_provider.composite_fundamental_adapter import CompositeFundamentalAdapter
+
+        adapter = CompositeFundamentalAdapter(primary=None, secondary=None)
+        result = adapter.get_institution_data("002906")
+
+        self.assertEqual(result["status"], "not_supported")
+        self.assertEqual(result["institution"], {})
+        self.assertIn("institution_provider_unavailable", result["errors"])
+
+    def test_composite_institution_prefers_tushare_top10_and_merges_secondary_institution_change(self) -> None:
+        from data_provider.composite_fundamental_adapter import CompositeFundamentalAdapter
+
+        primary = MagicMock()
+        primary.get_institution_data.return_value = {
+            "status": "ok",
+            "institution": {
+                "top10_holder_change": 1000.0,
+                "top10_float_holder_change": 700.0,
+                "holder_num": 41060,
+                "holder_num_change": -940,
+                "holder_num_end_date": "2026-04-10",
+            },
+            "source_chain": [
+                "top10_holders:tushare_top10_holders",
+                "top10_floatholders:tushare_top10_floatholders",
+                "holder_num:tushare_stk_holdernumber",
+            ],
+            "errors": [],
+        }
+        secondary = MagicMock()
+        secondary.get_institution_data.return_value = {
+            "status": "ok",
+            "institution": {"institution_holding_change": 1.2, "top10_holder_change": -0.4},
+            "source_chain": ["institution:stock_institute_hold"],
+            "errors": [],
+        }
+
+        adapter = CompositeFundamentalAdapter(primary=primary, secondary=secondary)
+        result = adapter.get_institution_data("002906")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["institution"]["top10_holder_change"], 1000.0)
+        self.assertEqual(result["institution"]["top10_float_holder_change"], 700.0)
+        self.assertEqual(result["institution"]["holder_num"], 41060)
+        self.assertEqual(result["institution"]["institution_holding_change"], 1.2)
+        self.assertIn("top10_holders:tushare_top10_holders", result["source_chain"])
+        self.assertIn("institution:stock_institute_hold", result["source_chain"])
+
     def test_composite_adapter_prefers_tushare_financials_and_uses_secondary_for_institution(self) -> None:
         from data_provider.composite_fundamental_adapter import CompositeFundamentalAdapter
 

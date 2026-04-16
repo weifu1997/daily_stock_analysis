@@ -323,6 +323,24 @@ class TushareFetcher(BaseFetcher):
             params["end_date"] = period
         return self._call_api_with_rate_limit("disclosure_date", **params)
 
+    def get_top10_holders_df(self, stock_code: str, period: Optional[str] = None) -> pd.DataFrame:
+        params = {"ts_code": self._to_ts_code(stock_code)}
+        if period:
+            params["end_date"] = period
+        return self._call_api_with_rate_limit("top10_holders", **params)
+
+    def get_top10_floatholders_df(self, stock_code: str, period: Optional[str] = None) -> pd.DataFrame:
+        params = {"ts_code": self._to_ts_code(stock_code)}
+        if period:
+            params["end_date"] = period
+        return self._call_api_with_rate_limit("top10_floatholders", **params)
+
+    def get_stk_holdernumber_df(self, stock_code: str, period: Optional[str] = None) -> pd.DataFrame:
+        params = {"ts_code": self._to_ts_code(stock_code)}
+        if period:
+            params["end_date"] = period
+        return self._call_api_with_rate_limit("stk_holdernumber", **params)
+
     def _get_trade_dates(self, end_date: Optional[str] = None) -> List[str]:
         """按自然日刷新交易日历缓存，避免服务跨日后继续复用旧日历。"""
         if self._api is None:
