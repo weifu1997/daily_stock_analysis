@@ -80,6 +80,22 @@ _NORMALIZATION_REASON_LABELS = {
         "zh": "持仓上下文校验通过",
         "en": "Portfolio-context check passed",
     },
+    "holder_structure_distributed_risk_buy_downgraded": {
+        "zh": "筹码分散且风险偏多，买入建议已降级",
+        "en": "Dispersed holder structure with clustered risks downgraded the buy call",
+    },
+    "holder_structure_concentrated_no_intel_buy_softened": {
+        "zh": "筹码集中但缺少催化，过热买入预期已收敛",
+        "en": "Concentrated holder structure without catalysts softened the buy bias",
+    },
+    "holder_structure_adjusted": {
+        "zh": "股东结构约束已修正结论",
+        "en": "Holder-structure guardrail adjusted the conclusion",
+    },
+    "holder_structure_no_change": {
+        "zh": "股东结构约束校验通过",
+        "en": "Holder-structure guardrail check passed",
+    },
     "no_change": {
         "zh": "未发生修正",
         "en": "No normalization change",
