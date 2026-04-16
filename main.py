@@ -436,6 +436,8 @@ def _summarize_normalization_reports(results: List[object]) -> tuple[Dict[str, o
     severity_rank = {"info": 0, "warning": 1, "hard_guardrail": 2}
     changed_reports: List[Dict[str, object]] = []
     reason_code_counts: Dict[str, int] = {}
+    transition_counts: Dict[str, int] = {}
+    transition_meta: Dict[str, Dict[str, str]] = {}
     severity_counts: Dict[str, int] = {"info": 0, "warning": 0, "hard_guardrail": 0}
     changed_result_count = 0
     hard_guardrail_count = 0
@@ -471,6 +473,28 @@ def _summarize_normalization_reports(results: List[object]) -> tuple[Dict[str, o
             if not reason_code:
                 continue
             reason_code_counts[str(reason_code)] = reason_code_counts.get(str(reason_code), 0) + 1
+        for applied_rule in report.get("applied_rules") or []:
+            if not isinstance(applied_rule, dict) or not applied_rule.get("changed"):
+                continue
+            reason_code = str(applied_rule.get("reason_code") or "").strip()
+            field_transitions = applied_rule.get("field_transitions") or {}
+            operation_transition = field_transitions.get("operation_advice") if isinstance(field_transitions, dict) else None
+            if not reason_code or not isinstance(operation_transition, dict):
+                continue
+            before_label = str(operation_transition.get("before") or "").strip()
+            after_label = str(operation_transition.get("after") or "").strip()
+            if not before_label or not after_label:
+                continue
+            key = f"{reason_code}::{before_label}->{after_label}"
+            transition_counts[key] = transition_counts.get(key, 0) + 1
+            transition_meta.setdefault(
+                key,
+                {
+                    "reason_code": reason_code,
+                    "before_operation_advice": before_label,
+                    "after_operation_advice": after_label,
+                },
+            )
 
     top_reason_codes = [
         {"reason_code": reason_code, "count": count}
@@ -478,6 +502,17 @@ def _summarize_normalization_reports(results: List[object]) -> tuple[Dict[str, o
             reason_code_counts.items(),
             key=lambda item: (-item[1], item[0]),
         )[:5]
+    ]
+    top_transitions = [
+        {
+            **transition_meta[key],
+            "count": count,
+        }
+        for key, count in sorted(
+            transition_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[:5]
+        if key in transition_meta
     ]
 
     summary = {
@@ -488,7 +523,9 @@ def _summarize_normalization_reports(results: List[object]) -> tuple[Dict[str, o
         "info_count": severity_counts["info"],
         "max_severity": max_severity,
         "reason_code_counts": reason_code_counts,
+        "transition_counts": transition_counts,
         "top_reason_codes": top_reason_codes,
+        "top_transitions": top_transitions,
         "stocks_with_hard_guardrail": stocks_with_hard_guardrail,
     }
     return summary, changed_reports

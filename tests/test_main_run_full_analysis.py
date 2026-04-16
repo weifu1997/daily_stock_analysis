@@ -61,6 +61,9 @@ def test_run_full_analysis_returns_success_execution_report():
                     "severity": "hard_guardrail",
                     "reason_code": "portfolio_non_holder_action_adjusted",
                     "modified_fields": ["operation_advice"],
+                    "field_transitions": {
+                        "operation_advice": {"before": "加仓", "after": "观望"},
+                    },
                 }
             ],
         },
@@ -86,6 +89,10 @@ def test_run_full_analysis_returns_success_execution_report():
     assert normalization_summary["info_count"] == 0
     assert normalization_summary["reason_code_counts"]["portfolio_non_holder_action_adjusted"] == 1
     assert normalization_summary["top_reason_codes"][0]["reason_code"] == "portfolio_non_holder_action_adjusted"
+    assert normalization_summary["transition_counts"]["portfolio_non_holder_action_adjusted::加仓->观望"] == 1
+    assert normalization_summary["top_transitions"][0]["reason_code"] == "portfolio_non_holder_action_adjusted"
+    assert normalization_summary["top_transitions"][0]["before_operation_advice"] == "加仓"
+    assert normalization_summary["top_transitions"][0]["after_operation_advice"] == "观望"
     assert normalization_summary["stocks_with_hard_guardrail"] == ["600519"]
 
 

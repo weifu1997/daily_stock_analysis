@@ -302,6 +302,52 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertIn("涉及股票：600519", out)
 
     @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_appends_guardrail_impact_summary(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False, report_language="zh")
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=78,
+            trend_prediction="看多",
+            operation_advice="观望",
+            analysis_summary="等待回踩后执行。",
+            report_language="zh",
+            dashboard={},
+        )
+
+        out = service.generate_dashboard_report(
+            [result],
+            report_date="2026-03-18",
+            normalization_summary={
+                "changed_result_count": 2,
+                "hard_guardrail_count": 1,
+                "top_reason_codes": [
+                    {"reason_code": "portfolio_non_holder_action_adjusted", "count": 1},
+                ],
+                "top_transitions": [
+                    {
+                        "reason_code": "portfolio_non_holder_action_adjusted",
+                        "before_operation_advice": "加仓",
+                        "after_operation_advice": "观望",
+                        "count": 2,
+                    },
+                    {
+                        "reason_code": "holder_structure_distributed_risk_buy_downgraded",
+                        "before_operation_advice": "买入",
+                        "after_operation_advice": "持有",
+                        "count": 1,
+                    },
+                ],
+                "stocks_with_hard_guardrail": ["600519"],
+            },
+        )
+
+        self.assertIn("主要转换：非持仓标的被纠正为非仓位动作建议（加仓→观望）×2 / 筹码分散且风险偏多，买入建议已降级（买入→持有）×1", out)
+        self.assertNotIn("portfolio_non_holder_action_adjusted", out)
+        self.assertNotIn("holder_structure_distributed_risk_buy_downgraded", out)
+
+    @mock.patch("src.notification.get_config")
     def test_generate_dashboard_report_localizes_holder_structure_reason_codes(self, mock_get_config: mock.MagicMock):
         mock_get_config.return_value = _make_config(report_renderer_enabled=False, report_language="zh")
         service = NotificationService()

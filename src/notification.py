@@ -281,6 +281,32 @@ class NotificationService(
             return separator.join(entries)
         return "None" if report_language == "en" else "无"
 
+    def _format_top_normalization_transitions(
+        self,
+        top_transitions: List[Dict[str, Any]],
+        report_language: str,
+        separator: str,
+    ) -> str:
+        entries = []
+        for item in top_transitions[:3]:
+            if not isinstance(item, dict) or not item.get("reason_code"):
+                continue
+            before_raw = str(item.get("before_operation_advice") or "").strip()
+            after_raw = str(item.get("after_operation_advice") or "").strip()
+            if report_language == "en":
+                before_label = localize_operation_advice(before_raw, report_language)
+                after_label = localize_operation_advice(after_raw, report_language)
+            else:
+                before_label = before_raw
+                after_label = after_raw
+            if not before_label or not after_label:
+                continue
+            reason_label = self._localize_normalization_reason_code(item.get("reason_code"), report_language)
+            entries.append(f"{reason_label}（{before_label}→{after_label}）×{item.get('count')}")
+        if entries:
+            return separator.join(entries)
+        return "None" if report_language == "en" else "无"
+
     def _render_normalization_summary_block(
         self,
         normalization_summary: Optional[Dict[str, Any]],
@@ -293,12 +319,14 @@ class NotificationService(
             return []
         hard_guardrail_count = int(normalization_summary.get("hard_guardrail_count") or 0)
         top_reason_codes = normalization_summary.get("top_reason_codes") or []
+        top_transitions = normalization_summary.get("top_transitions") or []
         stocks_with_hard_guardrail = normalization_summary.get("stocks_with_hard_guardrail") or []
         if report_language == "en":
             heading = "Normalization Summary"
             changed_label = "Normalized results this round"
             guardrail_label = "Hard guardrail adjustments"
             reasons_label = "Top reasons"
+            transitions_label = "Top transitions"
             stocks_label = "Affected stocks"
             separator = ", "
         else:
@@ -306,11 +334,17 @@ class NotificationService(
             changed_label = "本轮规范化修正"
             guardrail_label = "硬风控纠偏"
             reasons_label = "主要原因"
+            transitions_label = "主要转换"
             stocks_label = "涉及股票"
             separator = " / "
 
         top_reason_text = self._format_top_normalization_reasons(
             top_reason_codes,
+            report_language,
+            separator,
+        )
+        top_transition_text = self._format_top_normalization_transitions(
+            top_transitions,
             report_language,
             separator,
         )
@@ -321,6 +355,7 @@ class NotificationService(
             f"- {changed_label}：{changed_count}",
             f"- {guardrail_label}：{hard_guardrail_count}",
             f"- {reasons_label}：{top_reason_text}",
+            f"- {transitions_label}：{top_transition_text}",
             f"- {stocks_label}：{hard_guardrail_stocks}",
             "",
             "---",
