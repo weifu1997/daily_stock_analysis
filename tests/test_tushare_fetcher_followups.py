@@ -58,6 +58,35 @@ class TestTushareFetcherFollowUps(unittest.TestCase):
         self.assertEqual(fetcher._api.trade_cal.call_count, 2)
         self.assertEqual(rate_limit_mock.call_count, 2)
 
+    def test_daily_data_short_circuits_after_quota_error_for_same_method(self) -> None:
+        fetcher = self._make_fetcher()
+        quota_error = Exception("抱歉，您每天最多访问该接口200000次，权限的具体详情访问：https://tushare.pro/document/1?doc_id=108。")
+        fetcher._api.daily.side_effect = quota_error
+
+        with self.assertRaises(Exception) as first_exc:
+            fetcher._fetch_raw_data("600519", "2026-03-01", "2026-03-17")
+        self.assertIn("配额超限", str(first_exc.exception))
+        self.assertEqual(fetcher._api.daily.call_count, 1)
+
+        with self.assertRaises(Exception) as second_exc:
+            fetcher._fetch_raw_data("600519", "2026-03-01", "2026-03-17")
+        self.assertIn("temporary quota block", str(second_exc.exception).lower())
+        self.assertEqual(fetcher._api.daily.call_count, 1)
+
+    def test_daily_data_retries_after_temporary_quota_block_expires(self) -> None:
+        fetcher = self._make_fetcher()
+        fetcher._temporary_quota_blocks["daily"] = (
+            "expired quota block",
+            0.0,
+        )
+        fetcher._api.daily.return_value = pd.DataFrame({"trade_date": ["20260317"], "open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "vol": [1.0], "amount": [1.0], "pct_chg": [0.0]})
+
+        with patch("data_provider.tushare_fetcher.time.time", return_value=61.0):
+            df = fetcher._fetch_raw_data("600519", "2026-03-01", "2026-03-17")
+
+        self.assertIsNotNone(df)
+        self.assertEqual(fetcher._api.daily.call_count, 1)
+
     def test_get_sector_rankings_rate_limits_calendar_and_rankings_api(self) -> None:
         fetcher = self._make_fetcher()
         fetcher._api.trade_cal.return_value = pd.DataFrame(

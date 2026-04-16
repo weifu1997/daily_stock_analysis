@@ -72,7 +72,7 @@ class TestPipelineSingleNotifyThreadSafety(unittest.TestCase):
 
         notify_barrier = threading.Barrier(2)
 
-        def _analyze(code, report_type, query_id):
+        def _analyze(code, report_type, query_id, current_time=None):
             notify_barrier.wait(timeout=10)
             return _make_result(code)
 

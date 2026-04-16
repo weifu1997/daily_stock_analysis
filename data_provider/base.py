@@ -395,6 +395,8 @@ class BaseFetcher(ABC):
                 f"[{self.name}] {stock_code} 获取失败: 范围={start_date} ~ {end_date}, "
                 f"error_type={error_type}, elapsed={elapsed:.2f}s, reason={error_reason}"
             )
+            if isinstance(e, RateLimitError):
+                raise
             raise DataFetchError(f"[{self.name}] {stock_code}: {error_reason}") from e
     
     def _clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -498,6 +500,9 @@ class DataFetcherManager:
         self._fetcher_call_locks_lock = RLock()
         self._stock_name_cache: Dict[str, str] = {}
         self._stock_name_cache_lock = RLock()
+        self._temporary_fetcher_method_blocks: Dict[Tuple[str, str], Tuple[str, float]] = {}
+        self._temporary_fetcher_method_blocks_lock = RLock()
+        self._temporary_fetcher_block_seconds = 600.0
         
         if fetchers:
             # 按优先级排序
@@ -530,6 +535,10 @@ class DataFetcherManager:
             self._stock_name_cache = {}
         if not hasattr(self, "_stock_name_cache_lock") or self._stock_name_cache_lock is None:
             self._stock_name_cache_lock = RLock()
+        if not hasattr(self, "_temporary_fetcher_method_blocks") or self._temporary_fetcher_method_blocks is None:
+            self._temporary_fetcher_method_blocks = {}
+        if not hasattr(self, "_temporary_fetcher_method_blocks_lock") or self._temporary_fetcher_method_blocks_lock is None:
+            self._temporary_fetcher_method_blocks_lock = RLock()
 
     def _get_fetchers_snapshot(self) -> List[BaseFetcher]:
         self._ensure_concurrency_guards()
@@ -564,6 +573,26 @@ class DataFetcherManager:
         with self._stock_name_cache_lock:
             self._stock_name_cache[stock_code] = name
         return name
+
+    def _is_fetcher_method_temporarily_blocked(self, fetcher_name: str, method_name: str) -> Optional[str]:
+        self._ensure_concurrency_guards()
+        with self._temporary_fetcher_method_blocks_lock:
+            block = self._temporary_fetcher_method_blocks.get((fetcher_name, method_name))
+            if not block:
+                return None
+            reason, blocked_until = block
+            if time.time() >= blocked_until:
+                self._temporary_fetcher_method_blocks.pop((fetcher_name, method_name), None)
+                return None
+            return reason
+
+    def _block_fetcher_method_temporarily(self, fetcher_name: str, method_name: str, reason: str) -> None:
+        self._ensure_concurrency_guards()
+        with self._temporary_fetcher_method_blocks_lock:
+            self._temporary_fetcher_method_blocks[(fetcher_name, method_name)] = (
+                reason,
+                time.time() + float(getattr(self, "_temporary_fetcher_block_seconds", 600.0)),
+            )
 
     def _get_tickflow_fetcher(self):
         """Lazily create a TickFlow fetcher for market-review-only calls."""
@@ -973,6 +1002,13 @@ class DataFetcherManager:
                 for attempt, fetcher in enumerate(fetchers, start=1):
                     if fetcher.name != src_name:
                         continue
+                    blocked_reason = self._is_fetcher_method_temporarily_blocked(fetcher.name, "get_daily_data")
+                    if blocked_reason:
+                        logger.info(
+                            f"[数据源短路] [{fetcher.name}] {stock_code} get_daily_data 已临时禁用: {blocked_reason}"
+                        )
+                        errors.append(f"[{fetcher.name}] temporarily blocked: {blocked_reason}")
+                        break
                     try:
                         role = "首选" if src_name == source_order[0] else "兜底"
                         logger.info(
@@ -1002,6 +1038,9 @@ class DataFetcherManager:
                             f"error_type={error_type}, reason={error_reason}"
                         )
                         errors.append(error_msg)
+                        if isinstance(e, RateLimitError):
+                            self._block_fetcher_method_temporarily(fetcher.name, "get_daily_data", error_reason)
+                            logger.info(f"[数据源短路] [{fetcher.name}] get_daily_data 已在本轮临时禁用")
                     break
 
             error_summary = f"{market_label} {stock_code} 获取失败:\n" + "\n".join(errors)
@@ -1010,6 +1049,11 @@ class DataFetcherManager:
             raise DataFetchError(error_summary)
 
         for attempt, fetcher in enumerate(fetchers, start=1):
+            blocked_reason = self._is_fetcher_method_temporarily_blocked(fetcher.name, "get_daily_data")
+            if blocked_reason:
+                logger.info(f"[数据源短路] [{fetcher.name}] {stock_code} get_daily_data 已临时禁用: {blocked_reason}")
+                errors.append(f"[{fetcher.name}] temporarily blocked: {blocked_reason}")
+                continue
             try:
                 logger.info(f"[数据源尝试 {attempt}/{total_fetchers}] [{fetcher.name}] 获取 {stock_code}...")
                 df = self._call_fetcher_method(
@@ -1037,6 +1081,9 @@ class DataFetcherManager:
                     f"error_type={error_type}, reason={error_reason}"
                 )
                 errors.append(error_msg)
+                if isinstance(e, RateLimitError):
+                    self._block_fetcher_method_temporarily(fetcher.name, "get_daily_data", error_reason)
+                    logger.info(f"[数据源短路] [{fetcher.name}] get_daily_data 已在本轮临时禁用")
                 if attempt < total_fetchers:
                     next_fetcher = fetchers[attempt]
                     logger.info(f"[数据源切换] {stock_code}: [{fetcher.name}] -> [{next_fetcher.name}]")

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -96,7 +97,18 @@ def test_pipeline_runs_intel_search_when_only_mx_route_is_available():
     with patch("src.core.pipeline.get_market_for_stock", return_value="cn"), \
          patch("src.core.pipeline.get_market_now") as mock_market_now, \
          patch("src.core.pipeline.fill_chip_structure_if_needed"), \
-         patch("src.core.pipeline.fill_price_position_if_needed"):
+         patch("src.core.pipeline.fill_price_position_if_needed"), \
+         patch("src.core.pipeline.fill_institution_structure_if_needed"), \
+         patch(
+             "src.core.pipeline.normalize_analysis_result",
+             return_value=SimpleNamespace(
+                 changed_rules=[],
+                 changed_rule_count=0,
+                 max_severity="info",
+                 reason_codes=[],
+                 to_dict=lambda: {"changed_rules": [], "max_severity": "info", "reason_codes": []},
+             ),
+         ):
         mock_market_now.return_value = SimpleNamespace(date=lambda: __import__("datetime").date(2026, 1, 1))
         result = pipeline.analyze_stock("600519", report_type=SimpleNamespace(value="simple"), query_id="q1")
 
@@ -106,3 +118,66 @@ def test_pipeline_runs_intel_search_when_only_mx_route_is_available():
         stock_name="贵州茅台",
         max_searches=5,
     )
+
+
+def test_pipeline_analyze_stock_reuses_prefetched_daily_data_cache():
+    config = _make_config()
+    pipeline = _build_pipeline(config)
+    pipeline.search_service = None
+    pipeline.social_sentiment_service = None
+    pipeline._emit_progress = MagicMock()
+    pipeline._build_query_context = MagicMock(return_value={})
+    pipeline._enhance_context = MagicMock(return_value={"realtime": {}})
+    pipeline.fetcher_manager.get_stock_name.return_value = "贵州茅台"
+    pipeline.fetcher_manager.get_fundamental_context.return_value = {}
+    pipeline.fetcher_manager.get_daily_data.side_effect = AssertionError("should reuse prefetched daily cache")
+    pipeline.fetcher_manager.get_chip_distribution.return_value = None
+    pipeline.fetcher_manager.build_failed_fundamental_context.return_value = {}
+    pipeline.trend_analyzer.analyze.return_value = _DummyTrendResult()
+    pipeline.db.get_data_range.return_value = []
+    pipeline.db.get_analysis_context.return_value = {
+        "code": "600519",
+        "stock_name": "贵州茅台",
+        "date": "2026-01-01",
+        "today": {},
+        "yesterday": {},
+    }
+    pipeline.analyzer.analyze.return_value = _DummyResult()
+    pipeline._prefetched_daily_data = {
+        "600519": (
+            __import__("pandas").DataFrame(
+                [{"date": "2026-01-01", "close": 10.0, "open": 9.8, "high": 10.1, "low": 9.7, "volume": 100, "amount": 1000.0, "pct_chg": 0.5}]
+            ),
+            "TushareFetcher",
+            date(2026, 1, 1),
+        )
+    }
+    frozen_time = __import__("datetime").datetime(2026, 1, 1, 9, 30)
+
+    with patch("src.core.pipeline.get_market_for_stock", return_value="cn"), \
+         patch("src.core.pipeline.get_market_now") as mock_market_now, \
+         patch.object(pipeline, "_resolve_resume_target_date", return_value=date(2026, 1, 1)) as mock_resolve_target_date, \
+         patch("src.core.pipeline.fill_chip_structure_if_needed"), \
+         patch("src.core.pipeline.fill_price_position_if_needed"), \
+         patch("src.core.pipeline.fill_institution_structure_if_needed"), \
+         patch(
+             "src.core.pipeline.normalize_analysis_result",
+             return_value=SimpleNamespace(
+                 changed_rules=[],
+                 changed_rule_count=0,
+                 max_severity="info",
+                 reason_codes=[],
+                 to_dict=lambda: {"changed_rules": [], "max_severity": "info", "reason_codes": []},
+             ),
+         ):
+        mock_market_now.return_value = SimpleNamespace(date=lambda: __import__("datetime").date(2026, 1, 1))
+        result = pipeline.analyze_stock(
+            "600519",
+            report_type=SimpleNamespace(value="simple"),
+            query_id="q1",
+            current_time=frozen_time,
+        )
+
+    assert result is not None
+    pipeline.fetcher_manager.get_daily_data.assert_not_called()
+    mock_resolve_target_date.assert_called_once_with("600519", current_time=frozen_time)

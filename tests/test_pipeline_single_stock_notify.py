@@ -82,6 +82,15 @@ class TestPipelineSingleStockNotify(unittest.TestCase):
         pipeline.notifier = _TrackingNotifier()
         pipeline._save_local_report = MagicMock()
         pipeline._send_notifications = MagicMock()
+        pipeline._build_candidate_pool = MagicMock(
+            return_value={
+                "original_stock_codes": ["000001", "600519"],
+                "mx_xuangu_pool": [],
+                "portfolio_pool": [],
+                "final_candidate_pool": ["000001", "600519"],
+                "fallback_used": False,
+            }
+        )
         pipeline.config = SimpleNamespace(
             stock_list=["000001", "600519"],
             refresh_stock_list=lambda: None,

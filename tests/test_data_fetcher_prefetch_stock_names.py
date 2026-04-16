@@ -107,6 +107,44 @@ class TestPrefetchStockNames(unittest.TestCase):
         pipeline.db = MagicMock()
         pipeline.fetcher_manager.get_stock_name.return_value = "贵州茅台"
         pipeline.db.has_today_data.return_value = False
+        daily_df = pd.DataFrame(
+            [
+                {
+                    "date": "2026-03-27",
+                    "open": 1.0,
+                    "high": 1.0,
+                    "low": 1.0,
+                    "close": 1.0,
+                    "volume": 1,
+                    "amount": 1.0,
+                    "pct_chg": 0.0,
+                }
+            ]
+        )
+        pipeline.fetcher_manager.get_daily_data.return_value = (
+            daily_df,
+            "dummy",
+        )
+        pipeline.db.save_daily_data.return_value = 1
+
+        success, error = StockAnalysisPipeline.fetch_and_save_stock_data(pipeline, "600519")
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        pipeline.fetcher_manager.get_stock_name.assert_called_once_with("600519", allow_realtime=False)
+        pipeline.fetcher_manager.get_daily_data.assert_called_once_with("600519", days=120)
+        self.assertIn("600519", pipeline._prefetched_daily_data)
+        cached_df, cached_source, cached_target_date = pipeline._prefetched_daily_data["600519"]
+        self.assertEqual(cached_source, "dummy")
+        self.assertTrue(cached_df.equals(daily_df))
+        self.assertIsNotNone(cached_target_date)
+
+    def test_fetch_and_save_stock_data_skips_tushare_adj_backfill_when_primary_source_not_tushare(self):
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.fetcher_manager = MagicMock()
+        pipeline.db = MagicMock()
+        pipeline.fetcher_manager.get_stock_name.return_value = "贵州茅台"
+        pipeline.db.has_today_data.return_value = False
         pipeline.fetcher_manager.get_daily_data.return_value = (
             pd.DataFrame(
                 [
@@ -122,15 +160,104 @@ class TestPrefetchStockNames(unittest.TestCase):
                     }
                 ]
             ),
-            "dummy",
+            "EfinanceFetcher",
         )
         pipeline.db.save_daily_data.return_value = 1
+        tushare_fetcher = MagicMock()
+        tushare_fetcher.is_available.return_value = True
+        pipeline.fetcher_manager.get_fetcher.return_value = tushare_fetcher
 
         success, error = StockAnalysisPipeline.fetch_and_save_stock_data(pipeline, "600519")
 
         self.assertTrue(success)
         self.assertIsNone(error)
-        pipeline.fetcher_manager.get_stock_name.assert_called_once_with("600519", allow_realtime=False)
+        tushare_fetcher.get_adj_factor_data.assert_not_called()
+        tushare_fetcher.get_daily_adj_data.assert_not_called()
+
+    def test_fetch_and_save_stock_data_fetches_adj_factor_when_adj_daily_lacks_it(self):
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.fetcher_manager = MagicMock()
+        pipeline.db = MagicMock()
+        pipeline.fetcher_manager.get_stock_name.return_value = "贵州茅台"
+        pipeline.db.has_today_data.return_value = False
+        pipeline.fetcher_manager.get_daily_data.return_value = (
+            pd.DataFrame(
+                [
+                    {
+                        "date": "2026-03-27",
+                        "open": 1.0,
+                        "high": 1.0,
+                        "low": 1.0,
+                        "close": 1.0,
+                        "volume": 1,
+                        "amount": 1.0,
+                        "pct_chg": 0.0,
+                    }
+                ]
+            ),
+            "TushareFetcher",
+        )
+        pipeline.db.save_daily_data.return_value = 1
+        pipeline.db.save_daily_adj_data.return_value = 1
+        pipeline.db.save_adj_factor_data.return_value = 1
+        tushare_fetcher = MagicMock()
+        tushare_fetcher.is_available.return_value = True
+        tushare_fetcher.name = "TushareFetcher"
+        tushare_fetcher.get_daily_adj_data.return_value = pd.DataFrame(
+            [{"date": "2026-03-27", "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1, "amount": 1.0, "pct_chg": 0.0, "adj": "qfq"}]
+        )
+        tushare_fetcher.get_adj_factor_data.return_value = pd.DataFrame(
+            [{"date": "2026-03-27", "adj_factor": 1.2}]
+        )
+        pipeline.fetcher_manager.get_fetcher.return_value = tushare_fetcher
+
+        success, error = StockAnalysisPipeline.fetch_and_save_stock_data(pipeline, "600519")
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        tushare_fetcher.get_adj_factor_data.assert_called_once()
+        pipeline.db.save_adj_factor_data.assert_called_once()
+
+    def test_fetch_and_save_stock_data_fetches_adj_factor_when_adj_daily_missing(self):
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.fetcher_manager = MagicMock()
+        pipeline.db = MagicMock()
+        pipeline.fetcher_manager.get_stock_name.return_value = "贵州茅台"
+        pipeline.db.has_today_data.return_value = False
+        pipeline.fetcher_manager.get_daily_data.return_value = (
+            pd.DataFrame(
+                [
+                    {
+                        "date": "2026-03-27",
+                        "open": 1.0,
+                        "high": 1.0,
+                        "low": 1.0,
+                        "close": 1.0,
+                        "volume": 1,
+                        "amount": 1.0,
+                        "pct_chg": 0.0,
+                    }
+                ]
+            ),
+            "TushareFetcher",
+        )
+        pipeline.db.save_daily_data.return_value = 1
+        pipeline.db.save_adj_factor_data.return_value = 1
+        tushare_fetcher = MagicMock()
+        tushare_fetcher.is_available.return_value = True
+        tushare_fetcher.name = "TushareFetcher"
+        tushare_fetcher.get_daily_adj_data.return_value = None
+        tushare_fetcher.get_adj_factor_data.return_value = pd.DataFrame(
+            [{"date": "2026-03-27", "adj_factor": 1.2}]
+        )
+        pipeline.fetcher_manager.get_fetcher.return_value = tushare_fetcher
+
+        success, error = StockAnalysisPipeline.fetch_and_save_stock_data(pipeline, "600519")
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        tushare_fetcher.get_adj_factor_data.assert_called_once()
+        pipeline.db.save_adj_factor_data.assert_called_once()
 
     def test_pytdx_get_stock_name_reads_all_security_list_pages(self):
         fetcher = PytdxFetcher(hosts=[])

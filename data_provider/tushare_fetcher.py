@@ -145,6 +145,8 @@ class TushareFetcher(BaseFetcher):
         self._api: Optional[object] = None  # Tushare API 实例
         self.date_list: Optional[List[str]] = None  # 交易日列表缓存（倒序，最新日期在前）
         self._date_list_end: Optional[str] = None  # 缓存对应的截止日期，用于跨日刷新
+        self._temporary_quota_blocks: Dict[str, Tuple[str, float]] = {}
+        self._temporary_quota_block_seconds = 600.0
 
         # 尝试初始化 API
         self._init_api()
@@ -256,14 +258,39 @@ class TushareFetcher(BaseFetcher):
         self._call_count += 1
         logger.debug(f"Tushare 当前分钟调用次数: {self._call_count}/{self.rate_limit_per_minute}")
 
+    def _raise_if_method_temporarily_blocked(self, method_name: str) -> None:
+        block = self._temporary_quota_blocks.get(method_name)
+        if not block:
+            return
+        reason, blocked_until = block
+        if time.time() >= blocked_until:
+            self._temporary_quota_blocks.pop(method_name, None)
+            return
+        raise RateLimitError(f"Tushare method {method_name} is under temporary quota block: {reason}")
+
+    def _record_temporary_quota_block(self, method_name: str, reason: str) -> None:
+        if method_name:
+            self._temporary_quota_blocks[method_name] = (
+                reason,
+                time.time() + float(getattr(self, "_temporary_quota_block_seconds", 600.0)),
+            )
+
     def _call_api_with_rate_limit(self, method_name: str, **kwargs) -> pd.DataFrame:
         """统一通过速率限制包装 Tushare API 调用。"""
         if self._api is None:
             raise DataFetchError("Tushare API 未初始化，请检查 Token 配置")
 
+        self._raise_if_method_temporarily_blocked(method_name)
         self._check_rate_limit()
         method = getattr(self._api, method_name)
-        return method(**kwargs)
+        try:
+            return method(**kwargs)
+        except Exception as exc:
+            error_msg = str(exc).lower()
+            if any(keyword in error_msg for keyword in ['quota', '配额', 'limit', '权限']):
+                self._record_temporary_quota_block(method_name, str(exc))
+                raise RateLimitError(f"Tushare 配额超限: {exc}") from exc
+            raise
 
     def _get_china_now(self) -> datetime:
         """返回上海时区当前时间，方便测试覆盖跨日刷新逻辑。"""
@@ -508,7 +535,11 @@ class TushareFetcher(BaseFetcher):
         if _is_hk_market(stock_code):
             raise DataFetchError(f"TushareFetcher 不支持港股 {stock_code}，请使用 AkshareFetcher")
         
+        is_etf = _is_etf_code(stock_code)
+        api_name = "fund_daily" if is_etf else "daily"
+
         # Rate-limit check
+        self._raise_if_method_temporarily_blocked(api_name)
         self._check_rate_limit()
         
         # Convert code format
@@ -518,8 +549,6 @@ class TushareFetcher(BaseFetcher):
         ts_start = start_date.replace('-', '')
         ts_end = end_date.replace('-', '')
         
-        is_etf = _is_etf_code(stock_code)
-        api_name = "fund_daily" if is_etf else "daily"
         logger.debug(f"调用 Tushare {api_name}({ts_code}, {ts_start}, {ts_end})")
         
         try:
@@ -546,6 +575,7 @@ class TushareFetcher(BaseFetcher):
             # 检测配额超限
             if any(keyword in error_msg for keyword in ['quota', '配额', 'limit', '权限']):
                 logger.warning(f"Tushare 配额可能超限: {e}")
+                self._record_temporary_quota_block(api_name, str(e))
                 raise RateLimitError(f"Tushare 配额超限: {e}") from e
             
             raise DataFetchError(f"Tushare 获取数据失败: {e}") from e
@@ -1174,6 +1204,7 @@ class TushareFetcher(BaseFetcher):
         start_date: str,
         end_date: str,
         adj: str = "qfq",
+        raw_df: Optional[pd.DataFrame] = None,
     ) -> Optional[pd.DataFrame]:
         """获取复权日线数据（优先 pro_bar；失败则回退到普通日线 + 因子外算）。"""
         if self._api is None:
@@ -1234,18 +1265,34 @@ class TushareFetcher(BaseFetcher):
                 logger.warning(f"[Tushare] pro_bar 获取复权日线失败 {stock_code}: {e}")
 
         try:
-            raw_df = self._fetch_raw_data(stock_code, start_date, end_date)
-            if raw_df is None or raw_df.empty:
-                return None
             factor_df = self.get_adj_factor_data(stock_code=stock_code, start_date=start_date, end_date=end_date)
             if factor_df is None or factor_df.empty:
                 return None
 
-            raw_df = raw_df.copy()
-            raw_df['trade_date'] = raw_df['trade_date'].astype(str)
+            if raw_df is not None and not raw_df.empty:
+                merged = raw_df.copy()
+                if 'trade_date' not in merged.columns:
+                    if 'date' not in merged.columns:
+                        return None
+                    merged['trade_date'] = pd.to_datetime(merged['date'], errors='coerce').dt.strftime('%Y%m%d')
+                factor_df = factor_df.copy()
+                factor_df['trade_date'] = factor_df['trade_date'].astype(str)
+                merged = merged.merge(factor_df[['trade_date', 'adj_factor']], on='trade_date', how='left')
+                merged['adj_factor'] = merged['adj_factor'].ffill().bfill()
+                merged['adj'] = adj
+                keep_cols = ['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg', 'adj_factor', 'adj']
+                existing_cols = [col for col in keep_cols if col in merged.columns]
+                return merged[existing_cols]
+
+            raw_daily_df = self._fetch_raw_data(stock_code, start_date, end_date)
+            if raw_daily_df is None or raw_daily_df.empty:
+                return None
+
+            raw_daily_df = raw_daily_df.copy()
+            raw_daily_df['trade_date'] = raw_daily_df['trade_date'].astype(str)
             factor_df = factor_df.copy()
             factor_df['trade_date'] = factor_df['trade_date'].astype(str)
-            merged = raw_df.merge(factor_df[['trade_date', 'adj_factor']], on='trade_date', how='left')
+            merged = raw_daily_df.merge(factor_df[['trade_date', 'adj_factor']], on='trade_date', how='left')
             merged['adj_factor'] = merged['adj_factor'].ffill().bfill()
             return _normalize_adj_df(merged)
         except Exception as e:
