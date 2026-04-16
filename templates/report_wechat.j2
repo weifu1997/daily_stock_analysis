@@ -43,6 +43,13 @@
 {% endfor %}
 {% endif %}
 
+{% set institution = dashboard.get('data_perspective', {}).get('institution_structure', {}) if dashboard else {} %}
+{% if institution %}
+🏦 **{{ '机构/股东结构' if report_language != 'en' else 'Institution / Holder Structure' }}**:
+   • {{ '前十大股东净变动' if report_language != 'en' else 'Top10 Holder Net Change' }}: {{ institution.get('top10_holder_change', 'N/A') }}
+   • {{ '股东户数变动' if report_language != 'en' else 'Holder Count Change' }}: {{ institution.get('holder_num_change', 'N/A') }}
+{% endif %}
+
 {% set sniper = battle.get('sniper_points', {}) if battle else {} %}
 {% if sniper.ideal_buy or sniper.stop_loss or sniper.take_profit %}
 {% set ns = namespace(parts=[]) %}

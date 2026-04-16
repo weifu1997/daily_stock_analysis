@@ -101,6 +101,18 @@
 **{{ labels.chip_label }}**: {{ chip_data.get('profit_ratio', 'N/A') }} | {{ chip_data.get('avg_cost', 'N/A') }} | {{ chip_data.get('concentration', 'N/A') }} {{ localize_chip_health(chip_data.get('chip_health', 'N/A'), report_language) }}
 {% endif %}
 
+{% set institution_data = data_persp.get('institution_structure', {}) %}
+{% if institution_data %}
+**🏦 {{ '机构/股东结构' if report_language != 'en' else 'Institution / Holder Structure' }}**
+| {{ '指标' if report_language != 'en' else 'Metric' }} | {{ '数值' if report_language != 'en' else 'Value' }} |
+|---------|------|
+| {{ '前十大股东净变动' if report_language != 'en' else 'Top10 Holder Net Change' }} | {{ institution_data.get('top10_holder_change', 'N/A') }} |
+| {{ '前十大流通股东净变动' if report_language != 'en' else 'Top10 Float Holder Net Change' }} | {{ institution_data.get('top10_float_holder_change', 'N/A') }} |
+| {{ '最新股东户数' if report_language != 'en' else 'Latest Holder Count' }} | {{ institution_data.get('holder_num', 'N/A') }} |
+| {{ '股东户数变动' if report_language != 'en' else 'Holder Count Change' }} | {{ institution_data.get('holder_num_change', 'N/A') }} |
+| {{ '统计截止日' if report_language != 'en' else 'As Of Date' }} | {{ institution_data.get('holder_num_end_date', 'N/A') }} |
+{% endif %}
+
 {% set adj_data = data_persp.get('adj_structure', {}) %}
 {% if adj_data %}
 **📐 复权数据**: {{ adj_data.get('adj_source', 'TushareFetcher') }} / {{ adj_data.get('adj_type', 'qfq') }} | 因子 {{ adj_data.get('latest_adj_factor', 'N/A') }} | 最新复权收盘 {{ adj_data.get('latest_adj', {}).get('close', 'N/A') }} | 日期 {{ adj_data.get('latest_adj', {}).get('date', 'N/A') }}

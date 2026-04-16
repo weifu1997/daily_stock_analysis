@@ -78,6 +78,30 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("核心结论", out)
         self.assertIn("作战计划", out)
 
+    def test_render_markdown_full_includes_institution_holder_section(self) -> None:
+        r = _make_result(
+            dashboard={
+                "core_conclusion": {"one_sentence": "筹码仍需观察"},
+                "intelligence": {"risk_alerts": []},
+                "battle_plan": {"sniper_points": {"stop_loss": "110"}},
+                "data_perspective": {
+                    "institution_structure": {
+                        "top10_holder_change": -4484943.0,
+                        "holder_num": 41060,
+                        "holder_num_change": -81,
+                        "holder_num_end_date": "2026-04-10",
+                    }
+                },
+            }
+        )
+        out = render("markdown", [r], summary_only=False)
+        self.assertIsNotNone(out)
+        self.assertIn("机构/股东结构", out)
+        self.assertIn("前十大股东净变动", out)
+        self.assertIn("-4484943.0", out)
+        self.assertIn("股东户数变动", out)
+        self.assertIn("-81", out)
+
     def test_render_wechat(self) -> None:
         """Wechat platform renders."""
         r = _make_result()

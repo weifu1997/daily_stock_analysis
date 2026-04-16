@@ -27,7 +27,7 @@ from src.storage import get_db
 from data_provider import DataFetcherManager
 from data_provider.base import normalize_stock_code
 from data_provider.realtime_types import ChipDistribution
-from src.analyzer import GeminiAnalyzer, AnalysisResult, fill_chip_structure_if_needed, fill_price_position_if_needed
+from src.analyzer import GeminiAnalyzer, AnalysisResult, fill_chip_structure_if_needed, fill_price_position_if_needed, fill_institution_structure_if_needed
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.notification import NotificationService, NotificationChannel
 from src.report_language import (
@@ -610,6 +610,10 @@ class StockAnalysisPipeline:
             if result and chip_data:
                 fill_chip_structure_if_needed(result, chip_data)
 
+            # Step 7.65: institution_structure fallback from fundamental_context
+            if result and fundamental_context:
+                fill_institution_structure_if_needed(result, fundamental_context)
+
             # Step 7.7: price_position fallback
             if result:
                 fill_price_position_if_needed(result, trend_result, realtime_quote)
@@ -987,6 +991,10 @@ class StockAnalysisPipeline:
             # chip_structure fallback (Issue #589), before save_analysis_history
             if result and chip_data:
                 fill_chip_structure_if_needed(result, chip_data)
+
+            # institution_structure fallback from fundamental_context
+            if result and fundamental_context:
+                fill_institution_structure_if_needed(result, fundamental_context)
 
             # price_position fallback (same as non-agent path Step 7.7)
             if result:

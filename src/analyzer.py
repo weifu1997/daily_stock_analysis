@@ -233,6 +233,43 @@ def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dic
     }
 
 
+_INSTITUTION_KEYS: tuple = (
+    "top10_holder_change",
+    "top10_float_holder_change",
+    "holder_num",
+    "holder_num_change",
+    "holder_num_end_date",
+    "holder_num_ann_date",
+    "institution_holding_change",
+)
+
+
+def fill_institution_structure_if_needed(result: "AnalysisResult", fundamental_context: Any) -> None:
+    """Fill dashboard.data_perspective.institution_structure from fundamental_context in-place."""
+    if not result or not isinstance(fundamental_context, dict):
+        return
+    try:
+        institution_block = fundamental_context.get("institution") or {}
+        institution_data = institution_block.get("data") if isinstance(institution_block, dict) else {}
+        if not isinstance(institution_data, dict) or not institution_data:
+            return
+        if not result.dashboard:
+            result.dashboard = {}
+        dash = result.dashboard
+        dp = dash.get("data_perspective") or {}
+        dash["data_perspective"] = dp
+        current = dp.get("institution_structure") or {}
+        merged = dict(current)
+        for key in _INSTITUTION_KEYS:
+            if _is_value_placeholder(merged.get(key)) and not _is_value_placeholder(institution_data.get(key)):
+                merged[key] = institution_data.get(key)
+        if merged:
+            dp["institution_structure"] = merged
+            logger.info("[institution_structure] Filled institution fields from fundamental_context")
+    except Exception as e:
+        logger.warning("[institution_structure] Fill failed, skipping: %s", e)
+
+
 def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> None:
     """When chip_data exists, fill chip_structure placeholder fields from chip_data (in-place)."""
     if not result or not chip_data:
@@ -1741,14 +1778,26 @@ class GeminiAnalyzer:
             if isinstance(earnings_data, dict)
             else {}
         )
+        institution_block = (
+            fundamental_context.get("institution", {})
+            if isinstance(fundamental_context, dict)
+            else {}
+        )
+        institution_data = (
+            institution_block.get("data", {})
+            if isinstance(institution_block, dict)
+            else {}
+        )
         if (
             isinstance(financial_report, dict)
             or isinstance(dividend_metrics, dict)
             or isinstance(disclosure_date, dict)
+            or isinstance(institution_data, dict)
         ):
             financial_report = financial_report if isinstance(financial_report, dict) else {}
             dividend_metrics = dividend_metrics if isinstance(dividend_metrics, dict) else {}
             disclosure_date = disclosure_date if isinstance(disclosure_date, dict) else {}
+            institution_data = institution_data if isinstance(institution_data, dict) else {}
             ttm_yield = dividend_metrics.get("ttm_dividend_yield_pct", "N/A")
             ttm_cash = dividend_metrics.get("ttm_cash_dividend_per_share", "N/A")
             ttm_count = dividend_metrics.get("ttm_event_count", "N/A")
@@ -1785,6 +1834,19 @@ class GeminiAnalyzer:
 | 实际披露日期 | {disclosure_date.get('actual_date', 'N/A')} | 若有变更优先看实际日期 |
 
 > 优先以结构化披露日期判断业绩催化时点；若与新闻时间冲突，以结构化日期为准。
+"""
+            if institution_data:
+                prompt += f"""
+### 机构/股东结构（结构化）
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| 前十大股东净变动 | {institution_data.get('top10_holder_change', 'N/A')} | 单位：股；负数代表减持/退出多于增持 |
+| 前十大流通股东净变动 | {institution_data.get('top10_float_holder_change', 'N/A')} | 单位：股 |
+| 最新股东户数 | {institution_data.get('holder_num', 'N/A')} | |
+| 股东户数变动 | {institution_data.get('holder_num_change', 'N/A')} | 单位：户；负数通常代表筹码趋于集中 |
+| 股东户数统计截止日 | {institution_data.get('holder_num_end_date', 'N/A')} | |
+
+> 请结合前十大股东净变动与股东户数变动判断筹码分散/集中趋势；若字段缺失，明确写“数据缺失，无法判断”。
 """
 
         financial_filter_summary = context.get("financial_filter_summary") if isinstance(context, dict) else None
