@@ -10,7 +10,7 @@ from .models import (
     AnalysisNormalizationReport,
     RuleApplicationRecord,
 )
-from .portfolio_rules import PortfolioContextRule
+from .portfolio_rules import HolderStructureRule, PortfolioContextRule
 
 if TYPE_CHECKING:
     from src.analyzer import AnalysisResult
@@ -100,6 +100,7 @@ class DecisionConsistencyRule:
 _DEFAULT_RULES: List[NormalizationRule] = [
     DecisionConsistencyRule(),
     PortfolioContextRule(),
+    HolderStructureRule(),
     DecisionConsistencyRule(),
 ]
 

@@ -279,6 +279,146 @@ def test_normalization_rule_chain_returns_hit_records_and_modified_fields() -> N
     assert any("dashboard.core_conclusion.position_advice.no_position" == field for field in portfolio_record.modified_fields)
 
 
+def test_normalization_guardrail_downgrades_buy_when_holder_structure_is_distributed_and_risks_clustered() -> None:
+    result = AnalysisResult(
+        code="600519",
+        name="贵州茅台",
+        sentiment_score=82,
+        trend_prediction="看多",
+        operation_advice="买入",
+        decision_type="buy",
+        dashboard={
+            "core_conclusion": {
+                "one_sentence": "筹码结构虽然分散，但可以积极买入。",
+                "position_advice": {
+                    "no_position": "空仓者可积极买入布局",
+                    "has_position": "持仓者可继续持有观察",
+                },
+            },
+            "intelligence": {
+                "risk_alerts": ["大股东减持", "订单不及预期"],
+                "positive_catalysts": ["新品发布"],
+                "latest_news": "2026-04-16 公司公告",
+            },
+            "data_perspective": {
+                "institution_structure": {
+                    "holder_structure_bias": "分散",
+                    "holder_structure_note": "前十大净减持 + 户数上升，筹码扩散。",
+                }
+            },
+        },
+    )
+
+    report = normalize_analysis_result(
+        result,
+        AnalysisNormalizationContext(portfolio_context=PortfolioContext(has_position=False)),
+    )
+
+    assert result.decision_type == "hold"
+    assert result.operation_advice == "持有"
+    assert result.dashboard["core_conclusion"]["one_sentence"] == "筹码分散且风险偏多，暂不宜激进买入，先观望确认。"
+    assert result.dashboard["core_conclusion"]["position_advice"]["no_position"] == "空仓者以观望为主，等待风险出清或新催化确认。"
+    holder_record = next(record for record in report.applied_rules if record.rule_name == "holder-structure")
+    assert holder_record.severity == "hard_guardrail"
+    assert holder_record.reason_code == "holder_structure_distributed_risk_buy_downgraded"
+    assert "decision_type" in holder_record.modified_fields
+    assert "operation_advice" in holder_record.modified_fields
+
+
+
+def test_normalization_guardrail_softens_buy_when_holder_structure_is_concentrated_but_intel_is_empty() -> None:
+    result = AnalysisResult(
+        code="600519",
+        name="贵州茅台",
+        sentiment_score=78,
+        trend_prediction="看多",
+        operation_advice="买入",
+        decision_type="buy",
+        dashboard={
+            "core_conclusion": {
+                "one_sentence": "筹码集中，建议积极布局。",
+                "position_advice": {
+                    "no_position": "空仓者可直接买入跟进",
+                    "has_position": "持仓者可继续拿住等待抬升",
+                },
+            },
+            "intelligence": {
+                "risk_alerts": [],
+                "positive_catalysts": [],
+                "latest_news": "",
+                "earnings_outlook": "",
+            },
+            "data_perspective": {
+                "institution_structure": {
+                    "holder_structure_bias": "集中",
+                    "holder_structure_note": "前十大净增持 + 户数下降。",
+                }
+            },
+        },
+    )
+
+    report = normalize_analysis_result(
+        result,
+        AnalysisNormalizationContext(portfolio_context=PortfolioContext(has_position=False)),
+    )
+
+    assert result.decision_type == "hold"
+    assert result.operation_advice == "持有"
+    assert result.dashboard["core_conclusion"]["one_sentence"] == "筹码虽偏集中，但消息催化不足，先等待进一步确认。"
+    assert result.dashboard["core_conclusion"]["position_advice"]["no_position"] == "空仓者不宜仅凭筹码集中就激进买入，等待消息或业绩催化。"
+    holder_record = next(record for record in report.applied_rules if record.rule_name == "holder-structure")
+    assert holder_record.severity == "warning"
+    assert holder_record.reason_code == "holder_structure_concentrated_no_intel_buy_softened"
+    assert "decision_type" in holder_record.modified_fields
+    assert "operation_advice" in holder_record.modified_fields
+
+
+
+def test_normalization_holder_structure_guardrail_respects_english_report_language() -> None:
+    result = AnalysisResult(
+        code="AAPL",
+        name="Apple",
+        sentiment_score=78,
+        trend_prediction="Bullish",
+        operation_advice="Buy",
+        decision_type="buy",
+        report_language="en",
+        dashboard={
+            "core_conclusion": {
+                "one_sentence": "Holder structure looks concentrated, buy aggressively.",
+                "position_advice": {
+                    "no_position": "Open a position immediately",
+                    "has_position": "Keep pressing the position",
+                },
+            },
+            "intelligence": {
+                "risk_alerts": [],
+                "positive_catalysts": [],
+                "latest_news": "",
+                "earnings_outlook": "",
+            },
+            "data_perspective": {
+                "institution_structure": {
+                    "holder_structure_bias": "集中",
+                    "holder_structure_note": "Top holders increased while holder count fell.",
+                }
+            },
+        },
+    )
+
+    normalize_analysis_result(
+        result,
+        AnalysisNormalizationContext(portfolio_context=PortfolioContext(has_position=False)),
+    )
+
+    assert result.decision_type == "hold"
+    assert result.operation_advice == "Hold"
+    assert result.dashboard["core_conclusion"]["one_sentence"] == "Holder concentration looks constructive, but catalysts are still missing. Wait for confirmation."
+    assert result.dashboard["core_conclusion"]["position_advice"]["no_position"] == "Do not chase solely on holder concentration; wait for news or earnings catalysts."
+    assert result.dashboard["core_conclusion"]["position_advice"]["has_position"] == "Existing holders can keep tracking, but should avoid overconfidence without catalysts."
+
+
+
 def test_normalize_analysis_result_returns_report_summary() -> None:
     result = AnalysisResult(
         code="600519",
