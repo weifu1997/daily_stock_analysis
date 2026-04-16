@@ -1736,9 +1736,19 @@ class GeminiAnalyzer:
             if isinstance(earnings_data, dict)
             else {}
         )
-        if isinstance(financial_report, dict) or isinstance(dividend_metrics, dict):
+        disclosure_date = (
+            earnings_data.get("disclosure_date", {})
+            if isinstance(earnings_data, dict)
+            else {}
+        )
+        if (
+            isinstance(financial_report, dict)
+            or isinstance(dividend_metrics, dict)
+            or isinstance(disclosure_date, dict)
+        ):
             financial_report = financial_report if isinstance(financial_report, dict) else {}
             dividend_metrics = dividend_metrics if isinstance(dividend_metrics, dict) else {}
+            disclosure_date = disclosure_date if isinstance(disclosure_date, dict) else {}
             ttm_yield = dividend_metrics.get("ttm_dividend_yield_pct", "N/A")
             ttm_cash = dividend_metrics.get("ttm_cash_dividend_per_share", "N/A")
             ttm_count = dividend_metrics.get("ttm_event_count", "N/A")
@@ -1763,6 +1773,18 @@ class GeminiAnalyzer:
 | TTM 分红事件数 | {ttm_count} | |
 
 > 若上述字段为 N/A 或缺失，请明确写“数据缺失，无法判断”，禁止编造。
+"""
+            if disclosure_date:
+                prompt += f"""
+### 财报披露日期（结构化）
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| 对应报告期 | {disclosure_date.get('report_date', report_date)} | |
+| 预约披露日期 | {disclosure_date.get('pre_date', 'N/A')} | 公司预约口径 |
+| 公告披露日期 | {disclosure_date.get('ann_date', 'N/A')} | 交易所/公告口径 |
+| 实际披露日期 | {disclosure_date.get('actual_date', 'N/A')} | 若有变更优先看实际日期 |
+
+> 优先以结构化披露日期判断业绩催化时点；若与新闻时间冲突，以结构化日期为准。
 """
 
         financial_filter_summary = context.get("financial_filter_summary") if isinstance(context, dict) else None

@@ -153,6 +153,52 @@ class TestFundamentalContext(unittest.TestCase):
         self.assertIn("capital_flow", ctx)
         self.assertIn("dragon_tiger", ctx)
 
+    def test_fundamental_context_fetches_institution_from_independent_stage(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        cfg = SimpleNamespace(
+            enable_fundamental_pipeline=True,
+            fundamental_cache_ttl_seconds=120,
+            fundamental_stage_timeout_seconds=12.0,
+            fundamental_fetch_timeout_seconds=8.0,
+            fundamental_retry_max=1,
+        )
+        quote = SimpleNamespace(
+            pe_ratio=12.3,
+            pb_ratio=2.1,
+            total_mv=1.0e11,
+            circ_mv=7.0e10,
+            source=SimpleNamespace(value="tencent"),
+        )
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", return_value=quote), \
+                patch.object(manager._fundamental_adapter, "get_fundamental_bundle", return_value={
+                    "status": "ok",
+                    "growth": {"revenue_yoy": 10.1},
+                    "earnings": {"financial_report": {"report_date": "2025-12-31"}},
+                    "institution": {},
+                    "source_chain": ["financial_report:tushare_income"],
+                    "errors": [],
+                }), \
+                patch.object(manager._fundamental_adapter, "get_institution_data", return_value={
+                    "status": "ok",
+                    "institution": {
+                        "institution_holding_change": 1.2,
+                        "top10_holder_change": -0.4,
+                    },
+                    "source_chain": ["institution:akshare_hold", "top10:akshare_top10"],
+                    "errors": [],
+                }), \
+                patch.object(manager, "get_capital_flow_context", return_value={"status": "not_supported", "source_chain": []}), \
+                patch.object(manager, "get_dragon_tiger_context", return_value={"status": "not_supported", "source_chain": []}), \
+                patch.object(manager, "get_board_context", return_value={"status": "not_supported", "source_chain": []}):
+            ctx = manager.get_fundamental_context("600519", budget_seconds=12.0)
+
+        self.assertEqual(ctx["institution"]["status"], "ok")
+        self.assertEqual(ctx["institution"]["data"]["institution_holding_change"], 1.2)
+        self.assertEqual(ctx["institution"]["data"]["top10_holder_change"], -0.4)
+        providers = [item.get("provider") for item in ctx["institution"]["source_chain"]]
+        self.assertTrue(any(str(provider).startswith("institution:") for provider in providers))
+
     def test_fundamental_context_derives_ttm_dividend_yield_from_quote_price(self) -> None:
         manager = DataFetcherManager(fetchers=[])
         cfg = SimpleNamespace(

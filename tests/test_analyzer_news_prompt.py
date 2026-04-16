@@ -88,6 +88,42 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("财报与分红（价值投资口径）", prompt)
         self.assertIn("禁止编造", prompt)
 
+    def test_prompt_includes_structured_disclosure_dates_when_available(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer()
+
+        context = {
+            "code": "002906",
+            "stock_name": "华阳集团",
+            "date": "2026-03-16",
+            "today": {},
+            "fundamental_context": {
+                "earnings": {
+                    "data": {
+                        "financial_report": {"report_date": "2025-12-31", "revenue": 1000},
+                        "disclosure_date": {
+                            "report_date": "2025-12-31",
+                            "ann_date": "2026-03-18",
+                            "actual_date": "2026-03-20",
+                            "pre_date": "2026-03-19",
+                        },
+                    }
+                }
+            },
+        }
+        fake_cfg = SimpleNamespace(
+            news_max_age_days=30,
+            news_strategy_profile="medium",
+        )
+        with patch("src.analyzer.get_config", return_value=fake_cfg):
+            prompt = analyzer._format_prompt(context, "华阳集团", news_context="news")
+
+        self.assertIn("财报披露日期（结构化）", prompt)
+        self.assertIn("预约披露日期 | 2026-03-19", prompt)
+        self.assertIn("公告披露日期 | 2026-03-18", prompt)
+        self.assertIn("实际披露日期 | 2026-03-20", prompt)
+        self.assertIn("优先以结构化披露日期判断业绩催化时点", prompt)
+
     def test_prompt_prefers_context_news_window_days(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
             analyzer = GeminiAnalyzer()

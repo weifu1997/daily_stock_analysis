@@ -289,6 +289,51 @@ class AkshareFundamentalAdapter:
                 continue
         return None, None, errors
 
+    def _collect_institution_payload(self, stock_code: str) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "status": "not_supported",
+            "institution": {},
+            "source_chain": [],
+            "errors": [],
+        }
+
+        inst_df, inst_source, inst_errors = self._call_df_candidates([
+            ("stock_institute_hold", {}),
+            ("stock_institute_recommend", {}),
+        ])
+        result["errors"].extend(inst_errors)
+        if inst_df is not None:
+            row = _extract_latest_row(inst_df, stock_code)
+            if row is not None:
+                inst_change = _safe_float(_pick_by_keywords(row, ["增减", "变化", "变动", "持股变化"]))
+                if inst_change is not None:
+                    result["institution"]["institution_holding_change"] = inst_change
+                result["source_chain"].append(f"institution:{inst_source}")
+
+        top10_df, top10_source, top10_errors = self._call_df_candidates([
+            ("stock_gdfx_top_10_em", {"symbol": stock_code}),
+            ("stock_gdfx_top_10_em", {}),
+            ("stock_zh_a_gdhs_detail_em", {"symbol": stock_code}),
+            ("stock_zh_a_gdhs_detail_em", {}),
+        ])
+        result["errors"].extend(top10_errors)
+        if top10_df is not None:
+            row = _extract_latest_row(top10_df, stock_code)
+            if row is not None:
+                holder_change = _safe_float(_pick_by_keywords(row, ["增减", "变化", "持股变化", "变动"]))
+                if holder_change is not None:
+                    result["institution"]["top10_holder_change"] = holder_change
+                result["source_chain"].append(f"top10:{top10_source}")
+
+        if result["institution"]:
+            result["status"] = "ok"
+        elif result["source_chain"]:
+            result["status"] = "partial"
+        return result
+
+    def get_institution_data(self, stock_code: str) -> Dict[str, Any]:
+        return self._collect_institution_payload(stock_code)
+
     def get_fundamental_bundle(self, stock_code: str) -> Dict[str, Any]:
         """
         Return normalized fundamental blocks from AkShare with partial tolerance.
@@ -410,31 +455,14 @@ class AkshareFundamentalAdapter:
                 result["source_chain"].append(f"dividend:{dividend_source}")
 
         # Institution / top shareholders
-        inst_df, inst_source, inst_errors = self._call_df_candidates([
-            ("stock_institute_hold", {}),
-            ("stock_institute_recommend", {}),
-        ])
-        result["errors"].extend(inst_errors)
-        if inst_df is not None:
-            row = _extract_latest_row(inst_df, stock_code)
-            if row is not None:
-                inst_change = _safe_float(_pick_by_keywords(row, ["增减", "变化", "变动", "持股变化"]))
-                result["institution"]["institution_holding_change"] = inst_change
-                result["source_chain"].append(f"institution:{inst_source}")
-
-        top10_df, top10_source, top10_errors = self._call_df_candidates([
-            ("stock_gdfx_top_10_em", {"symbol": stock_code}),
-            ("stock_gdfx_top_10_em", {}),
-            ("stock_zh_a_gdhs_detail_em", {"symbol": stock_code}),
-            ("stock_zh_a_gdhs_detail_em", {}),
-        ])
-        result["errors"].extend(top10_errors)
-        if top10_df is not None:
-            row = _extract_latest_row(top10_df, stock_code)
-            if row is not None:
-                holder_change = _safe_float(_pick_by_keywords(row, ["增减", "变化", "持股变化", "变动"]))
-                result["institution"]["top10_holder_change"] = holder_change
-                result["source_chain"].append(f"top10:{top10_source}")
+        institution_result = self._collect_institution_payload(stock_code)
+        result["errors"].extend(institution_result.get("errors", []))
+        institution_payload = institution_result.get("institution", {})
+        if isinstance(institution_payload, dict) and institution_payload:
+            result["institution"].update(institution_payload)
+        for item in institution_result.get("source_chain", []):
+            if item not in result["source_chain"]:
+                result["source_chain"].append(item)
 
         has_content = bool(result["growth"] or result["earnings"] or result["institution"])
         result["status"] = "partial" if has_content else "not_supported"

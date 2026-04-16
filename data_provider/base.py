@@ -2225,7 +2225,7 @@ class DataFetcherManager:
         )
         growth_payload = bundle_payload.get("growth", {}) if isinstance(bundle_payload, dict) else {}
         earnings_payload = bundle_payload.get("earnings", {}) if isinstance(bundle_payload, dict) else {}
-        institution_payload = bundle_payload.get("institution", {}) if isinstance(bundle_payload, dict) else {}
+        bundle_institution_payload = bundle_payload.get("institution", {}) if isinstance(bundle_payload, dict) else {}
         if not isinstance(growth_payload, dict):
             growth_payload = {}
         else:
@@ -2234,10 +2234,10 @@ class DataFetcherManager:
             earnings_payload = {}
         else:
             earnings_payload = dict(earnings_payload)
-        if not isinstance(institution_payload, dict):
-            institution_payload = {}
+        if not isinstance(bundle_institution_payload, dict):
+            bundle_institution_payload = {}
         else:
-            institution_payload = dict(institution_payload)
+            bundle_institution_payload = dict(bundle_institution_payload)
 
         # Derive TTM dividend yield from already-fetched quote price; avoid extra quote calls.
         earnings_extra_errors: List[str] = []
@@ -2278,11 +2278,26 @@ class DataFetcherManager:
         growth_errors = list(adapter_errors)
         earnings_errors = list(adapter_errors)
         earnings_errors.extend(earnings_extra_errors)
-        institution_errors = list(adapter_errors)
+
+        institution_budget = min(fetch_timeout, remaining_seconds)
+        institution_start = time.time()
+        institution_block = self.get_institution_context(
+            stock_code,
+            budget_seconds=institution_budget,
+        )
+        _consume_budget(int((time.time() - institution_start) * 1000))
+        institution_stage_payload = institution_block.get("data", {}) if isinstance(institution_block, dict) else {}
+        if not isinstance(institution_stage_payload, dict):
+            institution_stage_payload = {}
+        institution_payload = dict(bundle_institution_payload)
+        for key, value in institution_stage_payload.items():
+            if key not in institution_payload or institution_payload[key] in (None, "", [], {}):
+                institution_payload[key] = value
 
         growth_status = self._infer_block_status(growth_payload, bundle_status)
         earnings_status = self._infer_block_status(earnings_payload, bundle_status)
-        institution_status = self._infer_block_status(institution_payload, bundle_status)
+        institution_status_seed = institution_block.get("status", bundle_status) if isinstance(institution_block, dict) else bundle_status
+        institution_status = self._infer_block_status(institution_payload, institution_status_seed)
 
         result_ctx["growth"] = self._build_fundamental_block(
             growth_status,
@@ -2296,10 +2311,27 @@ class DataFetcherManager:
             bundle_chain,
             earnings_errors,
         )
+        institution_source_chain = []
+        bundle_institution_chain = [
+            item for item in bundle_chain
+            if isinstance(item, dict)
+            and str(item.get("provider", "")).startswith(("institution:", "top10:"))
+        ]
+        for chain in (
+            bundle_institution_chain,
+            institution_block.get("source_chain", []) if isinstance(institution_block, dict) else [],
+        ):
+            for item in chain:
+                if item not in institution_source_chain:
+                    institution_source_chain.append(item)
+        institution_errors = []
+        if bundle_institution_payload:
+            institution_errors.extend(adapter_errors)
+        institution_errors.extend(institution_block.get("errors", []) if isinstance(institution_block, dict) else [])
         result_ctx["institution"] = self._build_fundamental_block(
             institution_status,
             institution_payload,
-            bundle_chain,
+            institution_source_chain,
             institution_errors,
         )
 
@@ -2390,8 +2422,60 @@ class DataFetcherManager:
             self._prune_fundamental_cache(cache_ttl, cache_max_entries)
         return result_ctx
 
+    def get_institution_context(self, stock_code: str, budget_seconds: Optional[float] = None) -> Dict[str, Any]:
+        """机构/十大股东块（fail-open）。"""
+        from src.config import get_config
+
+        config = get_config()
+        stock_code = normalize_stock_code(stock_code)
+        timeout = float(budget_seconds if budget_seconds is not None else config.fundamental_fetch_timeout_seconds)
+        if _market_tag(stock_code) != "cn" or _is_etf_code(stock_code):
+            return self._build_fundamental_block(
+                "not_supported",
+                {},
+                [{"provider": "fundamental_pipeline", "result": "not_supported", "duration_ms": 0}],
+                ["not supported"],
+            )
+
+        if timeout <= 0:
+            return self._build_fundamental_block(
+                "failed",
+                {},
+                [{"provider": "fundamental_pipeline", "result": "failed", "duration_ms": 0}],
+                ["fundamental stage timeout"],
+            )
+        payload, err, cost_ms = self._run_with_retry(
+            lambda: self._fundamental_adapter.get_institution_data(stock_code),
+            timeout,
+            "institution",
+        )
+        if not isinstance(payload, dict):
+            return self._build_fundamental_block(
+                "failed",
+                {},
+                [{"provider": "fundamental_pipeline", "result": "failed", "duration_ms": cost_ms}],
+                [err or "institution failed"],
+            )
+
+        institution_payload = payload.get("institution") or {}
+        if not isinstance(institution_payload, dict):
+            institution_payload = {}
+        adapter_status = str(payload.get("status", "not_supported"))
+        institution_status = self._infer_block_status(institution_payload, adapter_status)
+        return self._build_fundamental_block(
+            institution_status,
+            institution_payload,
+            self._normalize_source_chain(
+                payload.get("source_chain", []),
+                "institution",
+                institution_status,
+                cost_ms,
+            ),
+            list(payload.get("errors", [])) + ([err] if err else []),
+        )
+
     def get_capital_flow_context(self, stock_code: str, budget_seconds: Optional[float] = None) -> Dict[str, Any]:
-        """资金流向块（fail-open）。"""
+
         from src.config import get_config
 
         config = get_config()

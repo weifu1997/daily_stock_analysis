@@ -34,6 +34,16 @@ class CompositeFundamentalAdapter:
             "errors": ["capital_flow_provider_unavailable"],
         }
 
+    def get_institution_data(self, stock_code: str) -> Dict[str, Any]:
+        if self._secondary and hasattr(self._secondary, "get_institution_data"):
+            return self._secondary.get_institution_data(stock_code)
+        return {
+            "status": "not_supported",
+            "institution": {},
+            "source_chain": [],
+            "errors": ["institution_provider_unavailable"],
+        }
+
     def get_dragon_tiger_flag(self, stock_code: str, lookback_days: int = 20) -> Dict[str, Any]:
         if self._secondary and hasattr(self._secondary, "get_dragon_tiger_flag"):
             return self._secondary.get_dragon_tiger_flag(stock_code, lookback_days=lookback_days)
