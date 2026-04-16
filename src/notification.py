@@ -25,6 +25,7 @@ from src.report_language import (
     get_localized_stock_name,
     get_report_labels,
     get_result_guardrail_messages,
+    get_result_guardrail_traces,
     infer_decision_type_from_advice,
     get_signal_level,
     localize_chip_health,
@@ -255,7 +256,14 @@ class NotificationService(
             return []
         heading = "Conclusion Guardrail" if report_language == "en" else "结论约束"
         separator = "; " if report_language == "en" else "；"
-        return [f"🛡️ {heading}：{separator.join(messages)}", ""]
+        lines = [f"🛡️ {heading}：{separator.join(messages)}"]
+        transition_traces = get_result_guardrail_traces(getattr(result, "normalization_report", None), report_language)
+        for trace in transition_traces:
+            summary = str(trace.get("summary") or "").strip()
+            if summary:
+                lines.append(f"↔️ {summary}")
+        lines.append("")
+        return lines
 
     def _format_top_normalization_reasons(
         self,

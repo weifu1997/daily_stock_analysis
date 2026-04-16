@@ -19,6 +19,7 @@ from src.report_language import (
     get_localized_stock_name,
     get_report_labels,
     get_result_guardrail_messages,
+    get_result_guardrail_traces,
     get_signal_level,
     infer_decision_type_from_advice,
     localize_chip_health,
@@ -170,6 +171,7 @@ def render(
         "localize_chip_health": localize_chip_health,
         "localize_normalization_reason_code": localize_normalization_reason_code,
         "get_result_guardrail_messages": get_result_guardrail_messages,
+        "get_result_guardrail_traces": get_result_guardrail_traces,
         "mx_enrichment": mx_enrichment,
         "execution_policy_note": "以下信号为日终分析结果，默认用于次一交易日执行，不代表当晚立即交易。",
     }

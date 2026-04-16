@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.analysis.context_models import PortfolioContext
 
@@ -20,6 +20,7 @@ class RuleApplicationRecord:
     severity: str = "info"
     reason_code: str = "no_change"
     modified_fields: List[str] = field(default_factory=list)
+    field_transitions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -28,6 +29,14 @@ class RuleApplicationRecord:
             "severity": self.severity,
             "reason_code": self.reason_code,
             "modified_fields": list(self.modified_fields),
+            "field_transitions": {
+                str(field_name): {
+                    "before": transition.get("before"),
+                    "after": transition.get("after"),
+                }
+                for field_name, transition in self.field_transitions.items()
+                if isinstance(transition, dict)
+            },
         }
 
 

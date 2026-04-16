@@ -132,6 +132,36 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("筹码分散且风险偏多，买入建议已降级", out)
         self.assertNotIn("holder_structure_distributed_risk_buy_downgraded", out)
 
+    def test_render_markdown_full_appends_guardrail_transition_trace(self) -> None:
+        r = _make_result(
+            operation_advice="持有",
+            decision_type="hold",
+            dashboard={
+                "core_conclusion": {"one_sentence": "等待确认。"},
+                "intelligence": {"risk_alerts": ["大股东减持", "订单不及预期"]},
+                "battle_plan": {"sniper_points": {"stop_loss": "110"}},
+            },
+        )
+        r.normalization_report = {
+            "applied_rules": [
+                {
+                    "rule_name": "holder-structure",
+                    "changed": True,
+                    "severity": "hard_guardrail",
+                    "reason_code": "holder_structure_distributed_risk_buy_downgraded",
+                    "modified_fields": ["decision_type", "operation_advice"],
+                    "field_transitions": {
+                        "decision_type": {"before": "buy", "after": "hold"},
+                        "operation_advice": {"before": "买入", "after": "持有"},
+                    },
+                }
+            ]
+        }
+        out = render("markdown", [r], summary_only=False)
+        self.assertIsNotNone(out)
+        self.assertIn("原始：买入 → 约束后：持有", out)
+        self.assertIn("原因：筹码分散且风险偏多，买入建议已降级", out)
+
     def test_render_markdown_omits_holder_structure_rows_when_interpretation_missing(self) -> None:
         r = _make_result(
             dashboard={

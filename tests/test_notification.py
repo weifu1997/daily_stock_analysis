@@ -374,6 +374,41 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertNotIn("holder_structure_distributed_risk_buy_downgraded", out)
 
     @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_appends_result_level_guardrail_transition_trace(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False, report_language="zh")
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=78,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="等待确认。",
+            report_language="zh",
+            dashboard={"core_conclusion": {"one_sentence": "等待确认。"}},
+        )
+        result.normalization_report = {
+            "applied_rules": [
+                {
+                    "rule_name": "holder-structure",
+                    "changed": True,
+                    "severity": "hard_guardrail",
+                    "reason_code": "holder_structure_distributed_risk_buy_downgraded",
+                    "modified_fields": ["decision_type", "operation_advice"],
+                    "field_transitions": {
+                        "decision_type": {"before": "buy", "after": "hold"},
+                        "operation_advice": {"before": "买入", "after": "持有"},
+                    },
+                }
+            ]
+        }
+
+        out = service.generate_dashboard_report([result], report_date="2026-03-18")
+
+        self.assertIn("原始：买入 → 约束后：持有", out)
+        self.assertIn("原因：筹码分散且风险偏多，买入建议已降级", out)
+
+    @mock.patch("src.notification.get_config")
     def test_generate_single_stock_report_localizes_english_fallback(self, mock_get_config: mock.MagicMock):
         mock_get_config.return_value = _make_config(report_renderer_enabled=False, report_language="en")
         service = NotificationService()

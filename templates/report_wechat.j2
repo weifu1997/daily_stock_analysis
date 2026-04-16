@@ -25,6 +25,10 @@
 {% set guardrail_messages = get_result_guardrail_messages(result.normalization_report, report_language) %}
 {% if guardrail_messages %}
 🛡️ {{ '结论约束' if report_language != 'en' else 'Conclusion Guardrail' }}: {{ guardrail_messages|join('；' if report_language != 'en' else '; ') }}
+{% set guardrail_traces = get_result_guardrail_traces(result.normalization_report, report_language) %}
+{% for trace in guardrail_traces %}
+↔️ {{ trace.get('summary') }}
+{% endfor %}
 {% endif %}
 
 {% if intel.get('earnings_outlook') %}

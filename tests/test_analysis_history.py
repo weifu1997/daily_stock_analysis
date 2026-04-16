@@ -196,6 +196,49 @@ class AnalysisHistoryTestCase(unittest.TestCase):
         self.assertIsNotNone(detail)
         self.assertIsNone(detail.get("model_used"))
 
+    def test_history_detail_returns_guardrail_transition_trace(self) -> None:
+        result = self._build_result()
+        result.normalization_report = {
+            "applied_rules": [
+                {
+                    "rule_name": "holder-structure",
+                    "changed": True,
+                    "severity": "hard_guardrail",
+                    "reason_code": "holder_structure_distributed_risk_buy_downgraded",
+                    "modified_fields": ["decision_type", "operation_advice"],
+                    "field_transitions": {
+                        "decision_type": {"before": "buy", "after": "hold"},
+                        "operation_advice": {"before": "买入", "after": "持有"},
+                    },
+                }
+            ]
+        }
+
+        saved = self.db.save_analysis_history(
+            result=result,
+            query_id="query_guardrail_trace",
+            report_type="simple",
+            news_content="新闻摘要",
+            context_snapshot=None,
+            save_snapshot=False,
+        )
+        self.assertEqual(saved, 1)
+
+        with self.db.get_session() as session:
+            row = session.query(AnalysisHistory).filter(AnalysisHistory.query_id == "query_guardrail_trace").first()
+            if row is None:
+                self.fail("未找到保存的历史记录")
+            record_id = row.id
+
+        service = HistoryService(self.db)
+        detail = service.get_history_detail_by_id(record_id)
+        self.assertIsNotNone(detail)
+        guardrail_trace = detail.get("normalization_trace")
+        self.assertIsInstance(guardrail_trace, list)
+        self.assertEqual(guardrail_trace[0]["before_operation_advice"], "买入")
+        self.assertEqual(guardrail_trace[0]["after_operation_advice"], "持有")
+        self.assertEqual(guardrail_trace[0]["reason"], "筹码分散且风险偏多，买入建议已降级")
+
     def test_history_detail_accepts_dict_raw_result(self) -> None:
         """_record_to_detail_dict should handle dict raw_result without json.loads errors."""
         result = self._build_result()

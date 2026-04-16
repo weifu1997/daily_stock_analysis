@@ -277,6 +277,7 @@ def test_normalization_rule_chain_returns_hit_records_and_modified_fields() -> N
     assert "operation_advice" in portfolio_record.modified_fields
     assert "decision_type" in portfolio_record.modified_fields
     assert any("dashboard.core_conclusion.position_advice.no_position" == field for field in portfolio_record.modified_fields)
+    assert set(portfolio_record.field_transitions) == {"decision_type", "operation_advice"}
 
 
 def test_normalization_guardrail_downgrades_buy_when_holder_structure_is_distributed_and_risks_clustered() -> None:
@@ -323,6 +324,8 @@ def test_normalization_guardrail_downgrades_buy_when_holder_structure_is_distrib
     assert holder_record.reason_code == "holder_structure_distributed_risk_buy_downgraded"
     assert "decision_type" in holder_record.modified_fields
     assert "operation_advice" in holder_record.modified_fields
+    assert holder_record.field_transitions["decision_type"] == {"before": "buy", "after": "hold"}
+    assert holder_record.field_transitions["operation_advice"] == {"before": "买入", "after": "持有"}
 
 
 

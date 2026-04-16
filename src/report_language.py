@@ -646,3 +646,64 @@ def get_result_guardrail_messages(normalization_report: Any, language: Optional[
         seen.add(reason_label)
         messages.append(reason_label)
     return messages
+
+
+def _extract_guardrail_action_label(field_transitions: Any, stage: str, language: Optional[str]) -> str:
+    if not isinstance(field_transitions, dict):
+        return ""
+    operation_transition = field_transitions.get("operation_advice")
+    if isinstance(operation_transition, dict):
+        operation_value = localize_operation_advice(operation_transition.get(stage), language)
+        if str(operation_value or "").strip():
+            return str(operation_value).strip()
+    decision_transition = field_transitions.get("decision_type")
+    if isinstance(decision_transition, dict):
+        decision_value = localize_operation_advice(decision_transition.get(stage), language)
+        if str(decision_value or "").strip():
+            return str(decision_value).strip()
+    return ""
+
+
+
+def get_result_guardrail_traces(normalization_report: Any, language: Optional[str]) -> list[dict[str, Any]]:
+    if not isinstance(normalization_report, dict):
+        return []
+    applied_rules = normalization_report.get("applied_rules")
+    if not isinstance(applied_rules, list):
+        return []
+
+    normalized_language = normalize_report_language(language)
+    traces: list[dict[str, Any]] = []
+    seen = set()
+    for item in applied_rules:
+        if not isinstance(item, dict) or not item.get("changed"):
+            continue
+        severity = str(item.get("severity") or "").strip().lower()
+        if severity not in _GUARDRAIL_SEVERITIES:
+            continue
+        field_transitions = item.get("field_transitions")
+        before_label = _extract_guardrail_action_label(field_transitions, "before", normalized_language)
+        after_label = _extract_guardrail_action_label(field_transitions, "after", normalized_language)
+        reason = localize_normalization_reason_code(item.get("reason_code"), normalized_language)
+        if not before_label and not after_label and not reason:
+            continue
+        dedupe_key = (before_label, after_label, reason)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        if normalized_language == "en":
+            summary = f"Original: {before_label or 'Unknown'} → Constrained: {after_label or 'Unknown'} (Reason: {reason})"
+        else:
+            summary = f"原始：{before_label or '未知'} → 约束后：{after_label or '未知'}（原因：{reason}）"
+        traces.append(
+            {
+                "rule_name": str(item.get("rule_name") or ""),
+                "severity": severity,
+                "reason_code": str(item.get("reason_code") or ""),
+                "reason": reason,
+                "before_operation_advice": before_label or None,
+                "after_operation_advice": after_label or None,
+                "summary": summary,
+            }
+        )
+    return traces

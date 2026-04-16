@@ -20,6 +20,7 @@ from src.report_language import (
     get_bias_status_emoji,
     get_localized_stock_name,
     get_report_labels,
+    get_result_guardrail_traces,
     get_signal_level,
     localize_bias_status,
     localize_chip_health,
@@ -259,11 +260,15 @@ class HistoryService:
 
         model_used = (raw_result or {}).get("model_used") if isinstance(raw_result, dict) else None
         model_used = normalize_model_used(model_used)
+        report_language = normalize_report_language(
+            (raw_result or {}).get("report_language") if isinstance(raw_result, dict) else None
+        )
         sniper_points = self._get_display_sniper_points(record, raw_result)
 
         adj_structure = None
         financial_summary = None
         financial_filter_summary = None
+        normalization_trace = []
         if isinstance(raw_result, dict):
             dashboard = raw_result.get("dashboard") if isinstance(raw_result.get("dashboard"), dict) else {}
             adj_structure = dashboard.get("data_perspective", {}).get("adj_structure", {}) if isinstance(dashboard, dict) else {}
@@ -305,6 +310,8 @@ class HistoryService:
             if not isinstance(financial_filter_summary, dict) or not financial_filter_summary:
                 financial_filter_summary = None
 
+            normalization_trace = get_result_guardrail_traces(raw_result.get("normalization_report"), report_language)
+
         return {
             "id": record.id,
             "query_id": record.query_id,
@@ -327,6 +334,7 @@ class HistoryService:
             "adj_structure": adj_structure,
             "financial_summary": financial_summary,
             "financial_filter_summary": financial_filter_summary,
+            "normalization_trace": normalization_trace,
             "context_snapshot": context_snapshot,
         }
 

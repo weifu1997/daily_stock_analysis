@@ -52,6 +52,7 @@ class AnalysisNormalizationRuleChain:
             rule.apply(result, runtime_context)
             after = _snapshot_result(result)
             modified_fields = _diff_paths(before, after)
+            field_transitions = _collect_field_transitions(before, after, modified_fields)
             severity, reason_code = _describe_rule_change(
                 rule,
                 changed=bool(modified_fields),
@@ -67,6 +68,7 @@ class AnalysisNormalizationRuleChain:
                     severity=severity,
                     reason_code=reason_code,
                     modified_fields=modified_fields,
+                    field_transitions=field_transitions,
                 )
             )
         return AnalysisNormalizationReport(applied_rules=records)
@@ -159,6 +161,30 @@ def _snapshot_result(result: "AnalysisResult") -> Any:
     if hasattr(result, "to_dict"):
         return deepcopy(result.to_dict())
     return deepcopy(result)
+
+
+def _get_value_by_path(payload: Any, dotted_path: str) -> Any:
+    current = payload
+    for part in str(dotted_path or "").split("."):
+        if not part:
+            continue
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current.get(part)
+    return current
+
+
+def _collect_field_transitions(before: Any, after: Any, modified_fields: List[str]) -> dict[str, dict[str, Any]]:
+    transitions: dict[str, dict[str, Any]] = {}
+    safe_fields = {"decision_type", "operation_advice"}
+    for field_name in modified_fields:
+        if field_name not in safe_fields:
+            continue
+        transitions[str(field_name)] = {
+            "before": deepcopy(_get_value_by_path(before, field_name)),
+            "after": deepcopy(_get_value_by_path(after, field_name)),
+        }
+    return transitions
 
 
 def _diff_paths(before: Any, after: Any, prefix: str = "") -> List[str]:
