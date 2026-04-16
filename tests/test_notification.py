@@ -265,6 +265,43 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertNotIn("消息面", out)
 
     @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_appends_normalization_summary(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False, report_language="zh")
+        service = NotificationService()
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=78,
+            trend_prediction="看多",
+            operation_advice="买入",
+            analysis_summary="等待回踩后执行。",
+            report_language="zh",
+            dashboard={},
+        )
+
+        out = service.generate_dashboard_report(
+            [result],
+            report_date="2026-03-18",
+            normalization_summary={
+                "changed_result_count": 2,
+                "hard_guardrail_count": 1,
+                "top_reason_codes": [
+                    {"reason_code": "portfolio_non_holder_action_adjusted", "count": 1},
+                    {"reason_code": "decision_signal_normalized", "count": 1},
+                ],
+                "stocks_with_hard_guardrail": ["600519"],
+            },
+        )
+
+        self.assertIn("规范化摘要", out)
+        self.assertIn("本轮规范化修正：2", out)
+        self.assertIn("硬风控纠偏：1", out)
+        self.assertIn("主要原因：非持仓标的被纠正为非仓位动作建议×1 / 模型决策信号已规范化×1", out)
+        self.assertNotIn("portfolio_non_holder_action_adjusted", out)
+        self.assertNotIn("decision_signal_normalized", out)
+        self.assertIn("涉及股票：600519", out)
+
+    @mock.patch("src.notification.get_config")
     def test_generate_single_stock_report_localizes_english_fallback(self, mock_get_config: mock.MagicMock):
         mock_get_config.return_value = _make_config(report_renderer_enabled=False, report_language="en")
         service = NotificationService()

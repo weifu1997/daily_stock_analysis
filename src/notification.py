@@ -47,6 +47,45 @@ from src.notification_sender import (
 
 logger = logging.getLogger(__name__)
 
+_NORMALIZATION_REASON_LABELS = {
+    "portfolio_non_holder_action_adjusted": {
+        "zh": "非持仓标的被纠正为非仓位动作建议",
+        "en": "Non-holder action advice adjusted to non-position guidance",
+    },
+    "portfolio_non_holder_text_adjusted": {
+        "zh": "非持仓标的说明文案已修正",
+        "en": "Non-holder explanatory text adjusted",
+    },
+    "portfolio_context_adjusted": {
+        "zh": "持仓上下文相关建议已修正",
+        "en": "Portfolio-context guidance adjusted",
+    },
+    "decision_signal_normalized": {
+        "zh": "模型决策信号已规范化",
+        "en": "Model decision signal normalized",
+    },
+    "operation_advice_backfilled": {
+        "zh": "操作建议缺失已补齐",
+        "en": "Missing operation advice backfilled",
+    },
+    "decision_consistency_adjusted": {
+        "zh": "决策一致性已修正",
+        "en": "Decision consistency adjusted",
+    },
+    "decision_consistency_no_change": {
+        "zh": "决策一致性校验通过",
+        "en": "Decision consistency check passed",
+    },
+    "portfolio_context_no_change": {
+        "zh": "持仓上下文校验通过",
+        "en": "Portfolio-context check passed",
+    },
+    "no_change": {
+        "zh": "未发生修正",
+        "en": "No normalization change",
+    },
+}
+
 
 class NotificationChannel(Enum):
     """通知渠道类型"""
@@ -225,13 +264,14 @@ class NotificationService(
         results: List[AnalysisResult],
         report_type: Any,
         report_date: Optional[str] = None,
+        normalization_summary: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Generate the aggregate report content used by merge/save/push paths."""
         normalized_type = self._normalize_report_type(report_type)
         if normalized_type == ReportType.BRIEF:
-            report = self.generate_brief_report(results, report_date=report_date)
+            report = self.generate_brief_report(results, report_date=report_date, normalization_summary=normalization_summary)
         else:
-            report = self.generate_dashboard_report(results, report_date=report_date)
+            report = self.generate_dashboard_report(results, report_date=report_date, normalization_summary=normalization_summary)
 
         return report
 
@@ -242,6 +282,76 @@ class NotificationService(
             if model:
                 models.append(model)
         return list(dict.fromkeys(models))
+
+    def _localize_normalization_reason_code(self, reason_code: Optional[str], report_language: str) -> str:
+        normalized_language = "en" if report_language == "en" else "zh"
+        code = str(reason_code or "").strip()
+        if not code:
+            return "Unknown" if normalized_language == "en" else "未知原因"
+        localized = _NORMALIZATION_REASON_LABELS.get(code, {})
+        return str(localized.get(normalized_language) or code)
+
+    def _format_top_normalization_reasons(
+        self,
+        top_reason_codes: List[Dict[str, Any]],
+        report_language: str,
+        separator: str,
+    ) -> str:
+        entries = []
+        for item in top_reason_codes[:3]:
+            if not isinstance(item, dict) or not item.get("reason_code"):
+                continue
+            label = self._localize_normalization_reason_code(item.get("reason_code"), report_language)
+            entries.append(f"{label}×{item.get('count')}")
+        if entries:
+            return separator.join(entries)
+        return "None" if report_language == "en" else "无"
+
+    def _render_normalization_summary_block(
+        self,
+        normalization_summary: Optional[Dict[str, Any]],
+        report_language: str,
+    ) -> List[str]:
+        if not isinstance(normalization_summary, dict):
+            return []
+        changed_count = int(normalization_summary.get("changed_result_count") or 0)
+        if changed_count <= 0:
+            return []
+        hard_guardrail_count = int(normalization_summary.get("hard_guardrail_count") or 0)
+        top_reason_codes = normalization_summary.get("top_reason_codes") or []
+        stocks_with_hard_guardrail = normalization_summary.get("stocks_with_hard_guardrail") or []
+        if report_language == "en":
+            heading = "Normalization Summary"
+            changed_label = "Normalized results this round"
+            guardrail_label = "Hard guardrail adjustments"
+            reasons_label = "Top reasons"
+            stocks_label = "Affected stocks"
+            separator = ", "
+        else:
+            heading = "规范化摘要"
+            changed_label = "本轮规范化修正"
+            guardrail_label = "硬风控纠偏"
+            reasons_label = "主要原因"
+            stocks_label = "涉及股票"
+            separator = " / "
+
+        top_reason_text = self._format_top_normalization_reasons(
+            top_reason_codes,
+            report_language,
+            separator,
+        )
+        hard_guardrail_stocks = ", ".join(str(code) for code in stocks_with_hard_guardrail) or ("无" if report_language != "en" else "None")
+        return [
+            f"## 🛡️ {heading}",
+            "",
+            f"- {changed_label}：{changed_count}",
+            f"- {guardrail_label}：{hard_guardrail_count}",
+            f"- {reasons_label}：{top_reason_text}",
+            f"- {stocks_label}：{hard_guardrail_stocks}",
+            "",
+            "---",
+            "",
+        ]
     
     def _detect_all_channels(self) -> List[NotificationChannel]:
         """
@@ -755,7 +865,8 @@ class NotificationService(
     def generate_dashboard_report(
         self,
         results: List[AnalysisResult],
-        report_date: Optional[str] = None
+        report_date: Optional[str] = None,
+        normalization_summary: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         生成决策仪表盘格式的日报（详细版）
@@ -1085,6 +1196,10 @@ class NotificationService(
                     "",
                 ])
         
+        normalization_lines = self._render_normalization_summary_block(normalization_summary, report_language)
+        if normalization_lines:
+            report_lines.extend(normalization_lines)
+
         # 底部（去除免责声明）
         report_lines.extend([
             "",
@@ -1355,6 +1470,7 @@ class NotificationService(
         self,
         results: List[AnalysisResult],
         report_date: Optional[str] = None,
+        normalization_summary: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Generate brief report (3-5 sentences per stock) for mobile/push.
@@ -1415,6 +1531,9 @@ class NotificationService(
                 f"{localize_operation_advice(r.operation_advice, report_language)}（次日执行建议） | "
                 f"{labels['score_label']} {r.sentiment_score} | {one}"
             )
+        normalization_lines = self._render_normalization_summary_block(normalization_summary, report_language)
+        if normalization_lines:
+            lines.extend(normalization_lines)
         lines.append("")
         lines.append(f"*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
         return "\n".join(lines)

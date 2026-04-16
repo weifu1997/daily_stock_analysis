@@ -40,6 +40,8 @@ from src.services.social_sentiment_service import SocialSentimentService
 from src.services.candidate_enrichment import CandidateEnrichmentService
 from src.services.mx_name_cache import get_cached_stock_name
 from src.services.portfolio_service import PortfolioService
+from src.analysis.context_models import PortfolioContext
+from src.analysis.normalization import AnalysisNormalizationContext, normalize_analysis_result
 from src.integrations.mx.client import MxClient
 from src.integrations.mx.search_adapter import MxSearchAdapter
 from src.enums import ReportType
@@ -97,6 +99,8 @@ class StockAnalysisPipeline:
             self.config.save_context_snapshot if save_context_snapshot is None else save_context_snapshot
         )
         self.progress_callback = progress_callback
+        self._portfolio_snapshot_loaded = False
+        self._portfolio_snapshot_cache = None
         
         # 初始化各模块
         self.db = get_db()
@@ -137,10 +141,19 @@ class StockAnalysisPipeline:
             logger.info("筹码分布分析已禁用")
         if self.search_service is None:
             logger.warning("搜索服务未启用（初始化失败或依赖缺失）")
-        elif self.search_service.is_available:
-            logger.info("搜索服务已启用")
         else:
-            logger.warning("搜索服务未启用（未配置搜索能力）")
+            capability = self.search_service.get_capability_status()
+            logger.info(
+                "搜索服务能力状态: legacy=%s, mx_route=%s, comprehensive_intel=%s, reasons=%s",
+                capability.legacy_available,
+                capability.mx_route_available,
+                capability.comprehensive_intel_available,
+                capability.reasons,
+            )
+            if capability.comprehensive_intel_available:
+                logger.info("搜索服务已启用")
+            else:
+                logger.warning("搜索服务未启用（无可用情报搜索能力）")
 
         # 初始化社交舆情服务（仅美股，可选）
         try:
@@ -350,6 +363,8 @@ class StockAnalysisPipeline:
             if not stock_name or stock_name == code:
                 stock_name = get_cached_stock_name(code) or f'股票{code}'
 
+            portfolio_context = self._build_portfolio_context_for_stock(code)
+
             # Step 2: 获取日线与筹码分布所需数据
             daily_df = None
             try:
@@ -453,13 +468,24 @@ class StockAnalysisPipeline:
                     chip_data,
                     fundamental_context,
                     trend_result,
+                    portfolio_context,
                 )
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
             news_context = None
             self._emit_progress(46, f"{stock_name}：正在检索新闻与舆情")
-            if self.search_service is not None and self.search_service.is_available:
-                logger.info(f"{stock_name}({code}) 开始多维度情报搜索...")
+            if self.search_service is not None:
+                capability = self.search_service.get_capability_status()
+            else:
+                capability = None
+            if capability is not None and capability.comprehensive_intel_available:
+                logger.info(
+                    "%s(%s) 开始多维度情报搜索 (legacy=%s, mx_route=%s)...",
+                    stock_name,
+                    code,
+                    capability.legacy_available,
+                    capability.mx_route_available,
+                )
 
                 # 使用多维度搜索（最多5次搜索）
                 intel_results = self.search_service.search_comprehensive_intel(
@@ -493,7 +519,8 @@ class StockAnalysisPipeline:
                     except Exception as e:
                         logger.warning(f"{stock_name}({code}) 保存新闻情报失败: {e}")
             else:
-                logger.info(f"{stock_name}({code}) 搜索服务不可用，跳过情报搜索")
+                reason_text = capability.reasons if capability is not None else ["search_service_missing"]
+                logger.info(f"{stock_name}({code}) 搜索服务不可用，跳过情报搜索: reasons={reason_text}")
 
             # Step 4.5: Social sentiment intelligence (US stocks only)
             if self.social_sentiment_service is not None and self.social_sentiment_service.is_available and is_us_stock_code(code):
@@ -534,6 +561,7 @@ class StockAnalysisPipeline:
                 trend_result,
                 stock_name,  # 传入股票名称
                 fundamental_context,
+                portfolio_context,
             )
             
             # Step 7: 调用 AI 分析（传入增强的上下文和新闻）
@@ -556,6 +584,19 @@ class StockAnalysisPipeline:
                 progress_callback=self._emit_progress,
                 stream_progress_callback=_on_llm_stream,
             )
+            normalization_report = normalize_analysis_result(
+                result,
+                AnalysisNormalizationContext(portfolio_context=portfolio_context),
+            )
+            if result is not None:
+                result.normalization_report = normalization_report.to_dict()
+                logger.info(
+                    "[%s] normalization summary: changed_rules=%d max_severity=%s reason_codes=%s",
+                    getattr(result, "code", code),
+                    normalization_report.changed_rule_count,
+                    normalization_report.max_severity,
+                    normalization_report.reason_codes,
+                )
 
             # Step 7.5: 填充分析时的价格信息到 result
             if result:
@@ -608,7 +649,8 @@ class StockAnalysisPipeline:
         chip_data: Optional[ChipDistribution],
         trend_result: Optional[TrendAnalysisResult],
         stock_name: str = "",
-        fundamental_context: Optional[Dict[str, Any]] = None
+        fundamental_context: Optional[Dict[str, Any]] = None,
+        portfolio_context: Optional[PortfolioContext] = None,
     ) -> Dict[str, Any]:
         """
         增强分析上下文
@@ -627,6 +669,8 @@ class StockAnalysisPipeline:
         """
         enhanced = context.copy()
         enhanced["report_language"] = normalize_report_language(getattr(self.config, "report_language", "zh"))
+        if portfolio_context is not None:
+            enhanced["portfolio_context"] = portfolio_context.to_dict()
         
         # 添加股票名称
         if stock_name:
@@ -851,15 +895,16 @@ class StockAnalysisPipeline:
         return enriched_context
 
     def _analyze_with_agent(
-        self, 
-        code: str, 
-        report_type: ReportType, 
+        self,
+        code: str,
+        report_type: ReportType,
         query_id: str,
         stock_name: str,
-        realtime_quote: Any,
+        realtime_quote,
         chip_data: Optional[ChipDistribution],
         fundamental_context: Optional[Dict[str, Any]] = None,
         trend_result: Optional[TrendAnalysisResult] = None,
+        portfolio_context: Optional[PortfolioContext] = None,
     ) -> Optional[AnalysisResult]:
         """
         使用 Agent 模式分析单只股票。
@@ -879,6 +924,8 @@ class StockAnalysisPipeline:
                 "report_language": report_language,
                 "fundamental_context": fundamental_context,
             }
+            if portfolio_context is not None:
+                initial_context["portfolio_context"] = portfolio_context.to_dict()
             
             if realtime_quote:
                 initial_context["realtime_quote"] = self._safe_to_dict(realtime_quote)
@@ -912,7 +959,19 @@ class StockAnalysisPipeline:
 
             # 转换为 AnalysisResult
             result = self._agent_result_to_analysis_result(agent_result, code, stock_name, report_type, query_id)
+            normalization_report = normalize_analysis_result(
+                result,
+                AnalysisNormalizationContext(portfolio_context=portfolio_context),
+            )
             if result:
+                result.normalization_report = normalization_report.to_dict()
+                logger.info(
+                    "[%s] normalization summary: changed_rules=%d max_severity=%s reason_codes=%s",
+                    result.code,
+                    normalization_report.changed_rule_count,
+                    normalization_report.max_severity,
+                    normalization_report.reason_codes,
+                )
                 result.query_id = query_id
             # Agent weak integrity: placeholder fill only, no LLM retry
             if result and getattr(self.config, "report_integrity_enabled", False):
@@ -937,7 +996,7 @@ class StockAnalysisPipeline:
 
             # 保存新闻情报到数据库（Agent 工具结果仅用于 LLM 上下文，未持久化，Fixes #396）
             # 使用 search_stock_news（与 Agent 工具调用逻辑一致），仅 1 次 API 调用，无额外延迟
-            if self.search_service is not None and self.search_service.is_available:
+            if self.search_service is not None and self.search_service.can_search_stock_news(code):
                 try:
                     news_response = self.search_service.search_stock_news(
                         stock_code=code,
@@ -1367,13 +1426,51 @@ class StockAnalysisPipeline:
             logger.exception(f"[{code}] 处理过程发生未知异常: {e}")
             return None
     
-    def _extract_portfolio_stock_codes(self) -> List[str]:
-        """Extract unique stock codes from active portfolio positions."""
+    def _get_cached_portfolio_snapshot(self) -> Optional[Dict[str, Any]]:
+        if getattr(self, "_portfolio_snapshot_loaded", False):
+            return self._portfolio_snapshot_cache
+
         try:
             portfolio_service = PortfolioService()
             snapshot = portfolio_service.get_portfolio_snapshot()
         except Exception as exc:
             logger.info("[pipeline] portfolio snapshot unavailable: %s", exc)
+            snapshot = None
+
+        self._portfolio_snapshot_loaded = True
+        self._portfolio_snapshot_cache = snapshot
+        return snapshot
+
+    def _build_portfolio_context_for_stock(self, code: str) -> PortfolioContext:
+        snapshot = self._get_cached_portfolio_snapshot()
+        if not isinstance(snapshot, dict):
+            return PortfolioContext(has_position=None, source="portfolio_snapshot_unavailable")
+
+        normalized_code = normalize_stock_code(code)
+        for account in snapshot.get("accounts", []) or []:
+            if not isinstance(account, dict):
+                continue
+            for position in account.get("positions", []) or []:
+                if not isinstance(position, dict):
+                    continue
+                raw_code = position.get("symbol") or position.get("code")
+                if normalize_stock_code(raw_code) != normalized_code:
+                    continue
+                return PortfolioContext(
+                    has_position=True,
+                    quantity=position.get("quantity"),
+                    cost_basis=position.get("avg_cost"),
+                    unrealized_pnl=position.get("unrealized_pnl_base"),
+                    valuation_currency=position.get("valuation_currency") or account.get("base_currency"),
+                    source="portfolio_snapshot",
+                )
+
+        return PortfolioContext(has_position=False, source="portfolio_snapshot")
+
+    def _extract_portfolio_stock_codes(self) -> List[str]:
+        """Extract unique stock codes from active portfolio positions."""
+        snapshot = self._get_cached_portfolio_snapshot()
+        if not isinstance(snapshot, dict):
             return []
 
         portfolio_codes: List[str] = []

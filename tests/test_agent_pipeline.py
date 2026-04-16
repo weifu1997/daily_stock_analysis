@@ -561,12 +561,13 @@ class TestPipelineRouting(unittest.TestCase):
 
             pipeline._analyze_with_agent.assert_called_once()
             call_args = pipeline._analyze_with_agent.call_args
-            # Positional args: code, report_type, query_id, stock_name, realtime_quote, chip_data, fundamental_context, trend_result
+            # Positional args: code, report_type, query_id, stock_name, realtime_quote,
+            # chip_data, fundamental_context, trend_result, portfolio_context
             self.assertEqual(call_args[0][0], "600519")
             self.assertEqual(call_args[0][1], ReportType.SIMPLE)
             self.assertEqual(call_args[0][2], "q1")
-            # trend_result (8th arg) should be present (may be a TrendAnalysisResult or None)
-            self.assertEqual(len(call_args[0]), 8)
+            # trend_result + portfolio_context are now both passed through
+            self.assertEqual(len(call_args[0]), 9)
 
     def test_legacy_mode_does_not_call_agent(self):
         """When agent_mode=False, analyze_stock should NOT call _analyze_with_agent."""

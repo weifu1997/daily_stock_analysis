@@ -56,6 +56,7 @@ from src.integrations.mx.moni_client import MxMoniClient
 from src.webui_frontend import prepare_webui_frontend_assets
 from src.config import get_config, Config
 from src.logging_config import setup_logging
+from src.runtime.execution_report import ExecutionReport
 
 
 logger = logging.getLogger(__name__)
@@ -431,11 +432,73 @@ def _compute_trading_day_filter(
     return (filtered_codes, effective_region, should_skip_all)
 
 
+def _summarize_normalization_reports(results: List[object]) -> tuple[Dict[str, object], List[Dict[str, object]]]:
+    severity_rank = {"info": 0, "warning": 1, "hard_guardrail": 2}
+    changed_reports: List[Dict[str, object]] = []
+    reason_code_counts: Dict[str, int] = {}
+    severity_counts: Dict[str, int] = {"info": 0, "warning": 0, "hard_guardrail": 0}
+    changed_result_count = 0
+    hard_guardrail_count = 0
+    max_severity = "info"
+    stocks_with_hard_guardrail: List[str] = []
+
+    for item in results or []:
+        report = getattr(item, "normalization_report", None)
+        if not isinstance(report, dict):
+            continue
+        report_severity = str(report.get("max_severity") or "info")
+        if report_severity in severity_counts:
+            severity_counts[report_severity] += 1
+        if int(report.get("changed_rule_count") or 0) > 0:
+            changed_result_count += 1
+            changed_reports.append(
+                {
+                    "code": getattr(item, "code", None),
+                    "name": getattr(item, "name", None),
+                    "changed_rule_count": report.get("changed_rule_count", 0),
+                    "max_severity": report_severity,
+                    "reason_codes": list(report.get("reason_codes") or []),
+                }
+            )
+        if severity_rank.get(report_severity, 0) > severity_rank.get(max_severity, 0):
+            max_severity = report_severity
+        if report_severity == "hard_guardrail":
+            hard_guardrail_count += 1
+            code = getattr(item, "code", None)
+            if code:
+                stocks_with_hard_guardrail.append(str(code))
+        for reason_code in report.get("reason_codes") or []:
+            if not reason_code:
+                continue
+            reason_code_counts[str(reason_code)] = reason_code_counts.get(str(reason_code), 0) + 1
+
+    top_reason_codes = [
+        {"reason_code": reason_code, "count": count}
+        for reason_code, count in sorted(
+            reason_code_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[:5]
+    ]
+
+    summary = {
+        "result_count": len(results or []),
+        "changed_result_count": changed_result_count,
+        "hard_guardrail_count": hard_guardrail_count,
+        "warning_count": severity_counts["warning"],
+        "info_count": severity_counts["info"],
+        "max_severity": max_severity,
+        "reason_code_counts": reason_code_counts,
+        "top_reason_codes": top_reason_codes,
+        "stocks_with_hard_guardrail": stocks_with_hard_guardrail,
+    }
+    return summary, changed_reports
+
+
 def run_full_analysis(
     config: Config,
     args: argparse.Namespace,
     stock_codes: Optional[List[str]] = None
-):
+) -> ExecutionReport:
     """
     执行完整的分析流程（个股 + 大盘复盘）
 
@@ -445,6 +508,8 @@ def run_full_analysis(
     # failures propagate to the caller instead of being silently swallowed.
     from src.core.market_review import run_market_review
     from src.core.pipeline import StockAnalysisPipeline
+
+    report = ExecutionReport(success=False)
 
     try:
         # Issue #529: Hot-reload STOCK_LIST from .env on each scheduled run
@@ -460,10 +525,14 @@ def run_full_analysis(
             logger.info(
                 "今日所有相关市场均为非交易日，跳过执行。可使用 --force-run 强制执行。"
             )
-            return
+            report.success = True
+            report.set_artifact("skipped", True)
+            report.set_artifact("skip_reason", "all_markets_closed")
+            return report
         if set(filtered_codes) != set(effective_codes):
             skipped = set(effective_codes) - set(filtered_codes)
             logger.info("今日休市股票已跳过: %s", skipped)
+            report.set_artifact("skipped_stock_codes", sorted(skipped))
         stock_codes = filtered_codes
         logger.info("本轮最终股票列表: %s", stock_codes)
 
@@ -492,6 +561,7 @@ def run_full_analysis(
         if getattr(args, 'no_context_snapshot', False):
             save_context_snapshot = False
         query_id = uuid.uuid4().hex
+        report.set_artifact("query_id", query_id)
         pipeline = StockAnalysisPipeline(
             config=config,
             max_workers=args.workers,
@@ -507,6 +577,11 @@ def run_full_analysis(
             send_notification=True,
             merge_notification=merge_notification
         )
+        report.set_artifact("stock_codes", list(stock_codes or []))
+        report.set_artifact("result_count", len(results or []))
+        normalization_summary, normalization_reports = _summarize_normalization_reports(results or [])
+        report.set_artifact("normalization_summary", normalization_summary)
+        report.set_artifact("normalization_reports", normalization_reports)
 
         # 运行买卖信号后，落盘 T+1 模拟交易计划
         moni_plan_path = None
@@ -514,10 +589,12 @@ def run_full_analysis(
             if results:
                 moni_plan_path = save_plan(results, report_date=datetime.now().strftime('%Y-%m-%d'))
                 logger.info('moni_plan 已落盘: %s', moni_plan_path)
+                report.set_artifact("moni_plan_path", moni_plan_path)
             else:
                 logger.info('没有可落盘的买卖信号，跳过 moni_plan')
         except Exception as exc:
             logger.warning('moni_plan 落盘失败: %s', exc, exc_info=True)
+            report.add_degraded_component(name="moni_plan", status="failed", reason=str(exc))
 
         # 运行买卖信号后，接入 mx-moni 模拟仓摘要（18:00 收盘后分析场景）
         moni_summary = ''
@@ -545,10 +622,12 @@ def run_full_analysis(
                     f"委托={order_count}"
                 )
                 logger.info(moni_summary)
+                report.set_artifact("mx_moni_summary", moni_summary)
             else:
                 logger.warning('MX_APIKEY 未配置，跳过 mx-moni 模拟仓读取')
         except Exception as exc:
             logger.warning('mx-moni 模拟仓读取失败: %s', exc, exc_info=True)
+            report.add_degraded_component(name="mx_moni", status="failed", reason=str(exc))
 
 
         # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
@@ -580,6 +659,7 @@ def run_full_analysis(
             # 如果有结果，赋值给 market_report 用于后续飞书文档生成
             if review_result:
                 market_report = review_result
+                report.set_artifact("market_report_generated", True)
 
         # Issue #190: 合并推送（个股+大盘复盘）
         if merge_notification and (results or market_report):
@@ -590,6 +670,7 @@ def run_full_analysis(
                 dashboard_content = pipeline.notifier.generate_aggregate_report(
                     results,
                     getattr(config, 'report_type', 'simple'),
+                    normalization_summary=normalization_summary,
                 )
                 if moni_summary:
                     dashboard_content = dashboard_content + f"\n\n---\n\n## mx-moni模拟仓\n\n{moni_summary}"
@@ -601,6 +682,11 @@ def run_full_analysis(
                         logger.info("已合并推送（个股+大盘复盘）")
                     else:
                         logger.warning("合并推送失败")
+                        report.add_degraded_component(
+                            name="merge_notification",
+                            status="failed",
+                            reason="send_returned_false",
+                        )
 
         # 输出摘要
         if results:
@@ -639,6 +725,7 @@ def run_full_analysis(
                     dashboard_content = pipeline.notifier.generate_aggregate_report(
                         results,
                         getattr(config, 'report_type', 'simple'),
+                        normalization_summary=normalization_summary,
                     )
                     full_content += f"# 🚀 个股决策仪表盘\n\n{dashboard_content}"
 
@@ -646,11 +733,13 @@ def run_full_analysis(
                 doc_url = feishu_doc.create_daily_doc(doc_title, full_content)
                 if doc_url:
                     logger.info(f"飞书云文档创建成功: {doc_url}")
+                    report.set_artifact("feishu_doc_url", doc_url)
                     # 可选：将文档链接也推送到群里
                     pipeline.notifier.send(f"[{now.strftime('%Y-%m-%d %H:%M')}] 复盘文档创建成功: {doc_url}")
 
         except Exception as e:
             logger.error(f"飞书文档生成失败: {e}")
+            report.add_degraded_component(name="feishu_doc", status="failed", reason=str(e))
 
         # === Auto backtest ===
         try:
@@ -669,11 +758,19 @@ def run_full_analysis(
                     f"自动回测完成: processed={stats.get('processed')} saved={stats.get('saved')} "
                     f"completed={stats.get('completed')} insufficient={stats.get('insufficient')} errors={stats.get('errors')}"
                 )
+                report.set_artifact("backtest_stats", stats)
         except Exception as e:
             logger.warning(f"自动回测失败（已忽略）: {e}")
+            report.add_degraded_component(name="auto_backtest", status="failed", reason=str(e))
+
+        report.success = True
+        return report
 
     except Exception as e:
         logger.exception(f"分析流程执行失败: {e}")
+        report.success = False
+        report.fatal_error = str(e)
+        return report
 
 
 def start_api_server(host: str, port: int, config: Config) -> None:

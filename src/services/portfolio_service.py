@@ -439,6 +439,21 @@ class PortfolioService:
         as_of: Optional[date] = None,
         cost_method: str = "fifo",
     ) -> Dict[str, Any]:
+        payload = self._build_snapshot_payload(
+            account_id=account_id,
+            as_of=as_of,
+            cost_method=cost_method,
+        )
+        self._persist_snapshot_payload(payload)
+        return payload["public"]
+
+    def _build_snapshot_payload(
+        self,
+        *,
+        account_id: Optional[int] = None,
+        as_of: Optional[date] = None,
+        cost_method: str = "fifo",
+    ) -> Dict[str, Any]:
         as_of_date = as_of or date.today()
         method = self._normalize_cost_method(cost_method)
 
@@ -448,6 +463,7 @@ class PortfolioService:
         else:
             account_rows = self.repo.list_accounts(include_inactive=False)
 
+        account_snapshots: List[Dict[str, Any]] = []
         accounts_payload: List[Dict[str, Any]] = []
         aggregate_currency = "CNY"
         aggregate = {
@@ -459,71 +475,61 @@ class PortfolioService:
             "fee_total": 0.0,
             "tax_total": 0.0,
             "fx_stale": False,
+            "fx_unreliable": False,
+            "fx_warning_reasons": set(),
         }
 
         for account in account_rows:
             account_snapshot = self._replay_account(account=account, as_of_date=as_of_date, cost_method=method)
-
-            self.repo.replace_positions_lots_and_snapshot(
-                account_id=account.id,
-                snapshot_date=as_of_date,
-                cost_method=method,
-                base_currency=account.base_currency,
-                total_cash=account_snapshot["total_cash"],
-                total_market_value=account_snapshot["total_market_value"],
-                total_equity=account_snapshot["total_equity"],
-                unrealized_pnl=account_snapshot["unrealized_pnl"],
-                realized_pnl=account_snapshot["realized_pnl"],
-                fee_total=account_snapshot["fee_total"],
-                tax_total=account_snapshot["tax_total"],
-                fx_stale=account_snapshot["fx_stale"],
-                payload=json.dumps(account_snapshot["payload"], ensure_ascii=False),
-                positions=account_snapshot["positions_cache"],
-                lots=account_snapshot["lots_cache"],
-                valuation_currency=account.base_currency,
-            )
+            account_snapshots.append({
+                "account_id": account.id,
+                "snapshot_date": as_of_date,
+                "cost_method": method,
+                "base_currency": account.base_currency,
+                "snapshot": account_snapshot,
+            })
 
             accounts_payload.append(account_snapshot["public"])
 
-            cash_cny, stale_cash, _ = self._convert_amount(
+            cash_cny, stale_cash, reason_cash = self._convert_amount(
                 amount=account_snapshot["total_cash"],
-                from_currency=account.base_currency,
+                from_currency=account_snapshot["base_currency"],
                 to_currency=aggregate_currency,
                 as_of_date=as_of_date,
             )
-            mv_cny, stale_mv, _ = self._convert_amount(
+            mv_cny, stale_mv, reason_mv = self._convert_amount(
                 amount=account_snapshot["total_market_value"],
-                from_currency=account.base_currency,
+                from_currency=account_snapshot["base_currency"],
                 to_currency=aggregate_currency,
                 as_of_date=as_of_date,
             )
-            eq_cny, stale_eq, _ = self._convert_amount(
+            eq_cny, stale_eq, reason_eq = self._convert_amount(
                 amount=account_snapshot["total_equity"],
-                from_currency=account.base_currency,
+                from_currency=account_snapshot["base_currency"],
                 to_currency=aggregate_currency,
                 as_of_date=as_of_date,
             )
-            realized_cny, stale_realized, _ = self._convert_amount(
+            realized_cny, stale_realized, reason_realized = self._convert_amount(
                 amount=account_snapshot["realized_pnl"],
-                from_currency=account.base_currency,
+                from_currency=account_snapshot["base_currency"],
                 to_currency=aggregate_currency,
                 as_of_date=as_of_date,
             )
-            unrealized_cny, stale_unrealized, _ = self._convert_amount(
+            unrealized_cny, stale_unrealized, reason_unrealized = self._convert_amount(
                 amount=account_snapshot["unrealized_pnl"],
-                from_currency=account.base_currency,
+                from_currency=account_snapshot["base_currency"],
                 to_currency=aggregate_currency,
                 as_of_date=as_of_date,
             )
-            fee_cny, stale_fee, _ = self._convert_amount(
+            fee_cny, stale_fee, reason_fee = self._convert_amount(
                 amount=account_snapshot["fee_total"],
-                from_currency=account.base_currency,
+                from_currency=account_snapshot["base_currency"],
                 to_currency=aggregate_currency,
                 as_of_date=as_of_date,
             )
-            tax_cny, stale_tax, _ = self._convert_amount(
+            tax_cny, stale_tax, reason_tax = self._convert_amount(
                 amount=account_snapshot["tax_total"],
-                from_currency=account.base_currency,
+                from_currency=account_snapshot["base_currency"],
                 to_currency=aggregate_currency,
                 as_of_date=as_of_date,
             )
@@ -535,7 +541,7 @@ class PortfolioService:
             aggregate["unrealized_pnl"] += unrealized_cny
             aggregate["fee_total"] += fee_cny
             aggregate["tax_total"] += tax_cny
-            aggregate["fx_stale"] = aggregate["fx_stale"] or any(
+            aggregate["fx_stale"] = aggregate["fx_stale"] or account_snapshot.get("fx_stale", False) or any(
                 [
                     stale_cash,
                     stale_mv,
@@ -546,8 +552,24 @@ class PortfolioService:
                     stale_tax,
                 ]
             )
+            account_warning_reasons = set(account_snapshot.get("fx_warning_reasons") or [])
+            aggregate_warning_reasons = {
+                reason_cash,
+                reason_mv,
+                reason_eq,
+                reason_realized,
+                reason_unrealized,
+                reason_fee,
+                reason_tax,
+            }
+            aggregate_warning_reasons.update(account_warning_reasons)
+            aggregate_warning_reasons.discard("zero")
+            aggregate_warning_reasons.discard("identity")
+            aggregate["fx_warning_reasons"].update(aggregate_warning_reasons)
+            if account_snapshot.get("fx_unreliable", False) or "fallback_1_to_1" in aggregate_warning_reasons:
+                aggregate["fx_unreliable"] = True
 
-        return {
+        public_payload = {
             "as_of": as_of_date.isoformat(),
             "cost_method": method,
             "currency": aggregate_currency,
@@ -560,8 +582,36 @@ class PortfolioService:
             "fee_total": round(aggregate["fee_total"], 6),
             "tax_total": round(aggregate["tax_total"], 6),
             "fx_stale": aggregate["fx_stale"],
+            "fx_unreliable": aggregate["fx_unreliable"],
+            "fx_warning_reasons": sorted(aggregate["fx_warning_reasons"]),
             "accounts": accounts_payload,
         }
+        return {
+            "public": public_payload,
+            "account_snapshots": account_snapshots,
+        }
+
+    def _persist_snapshot_payload(self, payload: Dict[str, Any]) -> None:
+        for item in payload.get("account_snapshots", []):
+            account_snapshot = item["snapshot"]
+            self.repo.replace_positions_lots_and_snapshot(
+                account_id=item["account_id"],
+                snapshot_date=item["snapshot_date"],
+                cost_method=item["cost_method"],
+                base_currency=item["base_currency"],
+                total_cash=account_snapshot["total_cash"],
+                total_market_value=account_snapshot["total_market_value"],
+                total_equity=account_snapshot["total_equity"],
+                unrealized_pnl=account_snapshot["unrealized_pnl"],
+                realized_pnl=account_snapshot["realized_pnl"],
+                fee_total=account_snapshot["fee_total"],
+                tax_total=account_snapshot["tax_total"],
+                fx_stale=account_snapshot["fx_stale"],
+                payload=json.dumps(account_snapshot["payload"], ensure_ascii=False),
+                positions=account_snapshot["positions_cache"],
+                lots=account_snapshot["lots_cache"],
+                valuation_currency=item["base_currency"],
+            )
 
     def refresh_fx_rates(
         self,
@@ -743,10 +793,11 @@ class PortfolioService:
         events.sort(key=lambda item: (item[1], event_priority[item[0]], item[2]))
 
         cash_balances: Dict[str, float] = defaultdict(float)
+        realized_pnl_base = 0.0
         fees_total_base = 0.0
         taxes_total_base = 0.0
-        realized_pnl_base = 0.0
         fx_stale = False
+        fx_warning_reasons: Set[str] = set()
 
         fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = defaultdict(list)
         avg_state: Dict[Tuple[str, str, str], _AvgState] = defaultdict(_AvgState)
@@ -815,7 +866,7 @@ class PortfolioService:
                             event_date,
                         )
                     realized_local = proceeds_net - cost_basis
-                    realized_base, stale_realized, _ = self._convert_amount(
+                    realized_base, stale_realized, reason_realized = self._convert_amount(
                         amount=realized_local,
                         from_currency=key[2],
                         to_currency=account.base_currency,
@@ -823,16 +874,18 @@ class PortfolioService:
                     )
                     realized_pnl_base += realized_base
                     fx_stale = fx_stale or stale_realized
+                    if reason_realized not in {"zero", "identity"}:
+                        fx_warning_reasons.add(reason_realized)
                 else:
                     raise ValueError(f"Unsupported trade side: {event.side}")
 
-                fee_base, stale_fee, _ = self._convert_amount(
+                fee_base, stale_fee, reason_fee = self._convert_amount(
                     amount=fee,
                     from_currency=key[2],
                     to_currency=account.base_currency,
                     as_of_date=event_date,
                 )
-                tax_base, stale_tax, _ = self._convert_amount(
+                tax_base, stale_tax, reason_tax = self._convert_amount(
                     amount=tax,
                     from_currency=key[2],
                     to_currency=account.base_currency,
@@ -841,6 +894,10 @@ class PortfolioService:
                 fees_total_base += fee_base
                 taxes_total_base += tax_base
                 fx_stale = fx_stale or stale_fee or stale_tax
+                if reason_fee not in {"zero", "identity"}:
+                    fx_warning_reasons.add(reason_fee)
+                if reason_tax not in {"zero", "identity"}:
+                    fx_warning_reasons.add(reason_tax)
                 continue
 
             if event_type == "corp":
@@ -878,7 +935,7 @@ class PortfolioService:
                 else:
                     raise ValueError(f"Unsupported corporate action type: {event.action_type}")
 
-        position_rows, lot_rows, market_value_base, total_cost_base, stale_pos = self._build_positions(
+        position_rows, lot_rows, market_value_base, total_cost_base, stale_pos, position_warning_reasons = self._build_positions(
             account=account,
             as_of_date=as_of_date,
             cost_method=cost_method,
@@ -886,10 +943,11 @@ class PortfolioService:
             avg_state=avg_state,
         )
         fx_stale = fx_stale or stale_pos
+        fx_warning_reasons.update(position_warning_reasons)
 
         total_cash_base = 0.0
         for currency, amount in cash_balances.items():
-            converted, stale, _ = self._convert_amount(
+            converted, stale, reason_cash = self._convert_amount(
                 amount=amount,
                 from_currency=currency,
                 to_currency=account.base_currency,
@@ -897,6 +955,8 @@ class PortfolioService:
             )
             total_cash_base += converted
             fx_stale = fx_stale or stale
+            if reason_cash not in {"zero", "identity"}:
+                fx_warning_reasons.add(reason_cash)
 
         unrealized_pnl_base = market_value_base - total_cost_base
         total_equity_base = total_cash_base + market_value_base
@@ -918,6 +978,8 @@ class PortfolioService:
             "fee_total": round(fees_total_base, 6),
             "tax_total": round(taxes_total_base, 6),
             "fx_stale": fx_stale,
+            "fx_unreliable": "fallback_1_to_1" in fx_warning_reasons,
+            "fx_warning_reasons": sorted(fx_warning_reasons),
             "positions": position_rows,
         }
 
@@ -934,6 +996,8 @@ class PortfolioService:
             "fee_total": float(fees_total_base),
             "tax_total": float(taxes_total_base),
             "fx_stale": fx_stale,
+            "fx_warning_reasons": sorted(fx_warning_reasons),
+            "base_currency": account.base_currency,
         }
 
     def _build_positions(
@@ -944,12 +1008,13 @@ class PortfolioService:
         cost_method: str,
         fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]],
         avg_state: Dict[Tuple[str, str, str], _AvgState],
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float, float, bool]:
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float, float, bool, Set[str]]:
         position_rows: List[Dict[str, Any]] = []
         lot_rows: List[Dict[str, Any]] = []
         market_value_base = 0.0
         total_cost_base = 0.0
         fx_stale = False
+        fx_warning_reasons: Set[str] = set()
 
         keys: Iterable[Tuple[str, str, str]]
         if cost_method == "fifo":
@@ -992,13 +1057,13 @@ class PortfolioService:
                 last_price = avg_cost
 
             local_market_value = qty * float(last_price)
-            market_base, stale_market, _ = self._convert_amount(
+            market_base, stale_market, reason_market = self._convert_amount(
                 amount=local_market_value,
                 from_currency=currency,
                 to_currency=account.base_currency,
                 as_of_date=as_of_date,
             )
-            cost_base, stale_cost, _ = self._convert_amount(
+            cost_base, stale_cost, reason_cost = self._convert_amount(
                 amount=total_cost,
                 from_currency=currency,
                 to_currency=account.base_currency,
@@ -1006,7 +1071,18 @@ class PortfolioService:
             )
             unrealized_base = market_base - cost_base
             fx_stale = fx_stale or stale_market or stale_cost
+            if reason_market not in {"zero", "identity"}:
+                fx_warning_reasons.add(reason_market)
+            if reason_cost not in {"zero", "identity"}:
+                fx_warning_reasons.add(reason_cost)
 
+            position_warning_reasons = sorted(
+                {
+                    reason
+                    for reason in (reason_market, reason_cost)
+                    if reason not in {"zero", "identity"}
+                }
+            )
             position_rows.append(
                 {
                     "symbol": symbol,
@@ -1019,13 +1095,16 @@ class PortfolioService:
                     "market_value_base": round(market_base, 8),
                     "unrealized_pnl_base": round(unrealized_base, 8),
                     "valuation_currency": account.base_currency,
+                    "fx_stale": bool(stale_market or stale_cost),
+                    "fx_unreliable": "fallback_1_to_1" in position_warning_reasons,
+                    "fx_warning_reasons": position_warning_reasons,
                 }
             )
 
             market_value_base += market_base
             total_cost_base += cost_base
 
-        return position_rows, lot_rows, market_value_base, total_cost_base, fx_stale
+        return position_rows, lot_rows, market_value_base, total_cost_base, fx_stale, fx_warning_reasons
 
     @staticmethod
     def _consume_fifo_lots(

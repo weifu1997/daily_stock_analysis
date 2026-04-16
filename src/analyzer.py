@@ -511,6 +511,7 @@ class AnalysisResult:
     data_sources: str = ""  # 数据来源说明
     success: bool = True
     error_message: Optional[str] = None
+    normalization_report: Optional[Dict[str, Any]] = None
 
     # ========== 价格数据（分析时快照）==========
     current_price: Optional[float] = None  # 分析时的股价
@@ -555,6 +556,7 @@ class AnalysisResult:
             'search_performed': self.search_performed,
             'success': self.success,
             'error_message': self.error_message,
+            'normalization_report': self.normalization_report,
             'current_price': self.current_price,
             'change_pct': self.change_pct,
             'model_used': self.model_used,
@@ -1637,7 +1639,42 @@ class GeminiAnalyzer:
 | 分析日期 | {context.get('date', unknown_text)} |
 
 ---
+"""
 
+        portfolio_context = context.get("portfolio_context") if isinstance(context, dict) else None
+        if isinstance(portfolio_context, dict):
+            has_position = portfolio_context.get("has_position")
+            if has_position is True:
+                holding_status = "持仓中"
+            elif has_position is False:
+                holding_status = "未持仓"
+            else:
+                holding_status = "未知"
+            quantity = portfolio_context.get("quantity")
+            cost_basis = portfolio_context.get("cost_basis")
+            unrealized_pnl = portfolio_context.get("unrealized_pnl")
+            valuation_currency = portfolio_context.get("valuation_currency") or unknown_text
+            source = portfolio_context.get("source") or unknown_text
+            prompt += f"""
+## 💼 持仓上下文（显式输入）
+| 项目 | 数据 |
+|------|------|
+| 当前持仓状态 | {holding_status} |
+| 持仓数量 | {quantity if quantity is not None else unknown_text} |
+| 持仓成本 | {cost_basis if cost_basis is not None else unknown_text} |
+| 浮动盈亏 | {unrealized_pnl if unrealized_pnl is not None else unknown_text} |
+| 估值币种 | {valuation_currency} |
+| 数据来源 | {source} |
+
+> 这是系统显式提供的持仓状态，不要自行猜测。
+> - 若“当前持仓状态=持仓中”，才允许使用“加仓/减仓/清仓”等仓位动作词。
+> - 若“当前持仓状态=未持仓”，严禁使用“加仓/减仓/清仓”。
+> - 若“当前持仓状态=未知”，按非持仓处理。
+
+---
+"""
+
+        prompt += f"""
 ## 📈 技术面数据
 
 ### 今日行情

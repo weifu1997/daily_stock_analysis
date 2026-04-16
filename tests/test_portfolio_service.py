@@ -562,6 +562,57 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertIsInstance(errors[0], PortfolioConflictError)
         self.assertIn("Duplicate trade_uid", str(errors[0]))
 
+    def test_convert_amount_marks_fallback_1_to_1_as_unreliable(self) -> None:
+        converted, stale, reason = self.service.convert_amount(
+            amount=100.0,
+            from_currency="USD",
+            to_currency="CNY",
+            as_of_date=date(2026, 1, 5),
+        )
+
+        self.assertAlmostEqual(converted, 100.0, places=6)
+        self.assertTrue(stale)
+        self.assertEqual(reason, "fallback_1_to_1")
+
+    def test_snapshot_surfaces_fx_unreliable_state_and_warning_reasons(self) -> None:
+        account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="CNY")
+        aid = account["id"]
+
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=1000,
+            currency="USD",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="AAPL",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=10,
+            price=10,
+            fee=0,
+            tax=0,
+            market="us",
+            currency="USD",
+        )
+        self._save_close("AAPL", date(2026, 1, 5), 12.0)
+
+        snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=date(2026, 1, 5), cost_method="fifo")
+        acc = snapshot["accounts"][0]
+        pos = acc["positions"][0]
+
+        self.assertTrue(snapshot["fx_stale"])
+        self.assertTrue(snapshot["fx_unreliable"])
+        self.assertIn("fallback_1_to_1", snapshot["fx_warning_reasons"])
+        self.assertTrue(acc["fx_stale"])
+        self.assertTrue(acc["fx_unreliable"])
+        self.assertIn("fallback_1_to_1", acc["fx_warning_reasons"])
+        self.assertTrue(pos["fx_stale"])
+        self.assertTrue(pos["fx_unreliable"])
+        self.assertIn("fallback_1_to_1", pos["fx_warning_reasons"])
+
     def test_portfolio_write_session_maps_sqlite_locked_error(self) -> None:
         repo = PortfolioRepository(db_manager=self.db)
         session = self.db.get_session()

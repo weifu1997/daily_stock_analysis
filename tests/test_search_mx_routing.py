@@ -15,6 +15,7 @@ if "newspaper" not in sys.modules:
     sys.modules["newspaper"] = mock_np
 
 from src.search_service import SearchResponse, SearchResult, SearchService
+from src.search.capabilities import SearchCapabilityStatus
 
 
 class TestMxSearchRouting(unittest.TestCase):
@@ -36,6 +37,31 @@ class TestMxSearchRouting(unittest.TestCase):
 
     def _make_mx_resp(self, items, ok=True, error=None):
         return SimpleNamespace(ok=ok, data={"items": items}, error=error)
+
+    @patch("src.search_service.get_config")
+    def test_mx_only_capability_status_reports_route_availability(self, mock_get_config):
+        mock_get_config.return_value = self._make_config()
+        mx_client = MagicMock()
+        mx_client.enabled = True
+        with patch("src.search_service.MxClient", return_value=mx_client):
+            service = SearchService(
+                bocha_keys=[],
+                tavily_keys=[],
+                brave_keys=[],
+                serpapi_keys=[],
+                minimax_keys=[],
+                searxng_base_urls=[],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+
+        capability = service.get_capability_status()
+        self.assertIsInstance(capability, SearchCapabilityStatus)
+        self.assertFalse(service.is_available)
+        self.assertFalse(capability.legacy_available)
+        self.assertTrue(capability.mx_route_available)
+        self.assertTrue(capability.comprehensive_intel_available)
 
     @patch("src.search_service.get_config")
     def test_mx_hit_returns_primary_results(self, mock_get_config):

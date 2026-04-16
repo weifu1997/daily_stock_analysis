@@ -41,6 +41,7 @@ from src.config import (
     resolve_news_window_days,
 )
 from src.integrations.mx.client import MxClient
+from src.search.capabilities import SearchCapabilityStatus
 
 logger = logging.getLogger(__name__)
 
@@ -2387,8 +2388,49 @@ class SearchService:
 
     @property
     def is_available(self) -> bool:
-        """检查是否有可用的搜索引擎"""
-        return any(p.is_available for p in self._providers)
+        """检查是否有可用的 legacy 搜索引擎。"""
+        return self.get_capability_status().legacy_available
+
+    def get_capability_status(self) -> SearchCapabilityStatus:
+        """Return explicit runtime capability flags for search paths."""
+        legacy_available = any(getattr(p, "is_available", False) for p in self._providers)
+        mx_route_available = bool(
+            self.mx_enabled
+            and self.mx_search_primary_provider == "mx"
+            and self.mx_client is not None
+            and getattr(self.mx_client, "enabled", False)
+        )
+        comprehensive_intel_available = bool(mx_route_available or legacy_available)
+
+        reasons: List[str] = []
+        if not legacy_available:
+            reasons.append("legacy_providers_unavailable")
+        if not mx_route_available:
+            if not self.mx_enabled:
+                reasons.append("mx_disabled")
+            elif self.mx_search_primary_provider != "mx":
+                reasons.append("mx_not_primary_provider")
+            elif self.mx_client is None or not getattr(self.mx_client, "enabled", False):
+                reasons.append("mx_client_unavailable")
+        if not comprehensive_intel_available:
+            reasons.append("comprehensive_intel_unavailable")
+
+        return SearchCapabilityStatus(
+            legacy_available=legacy_available,
+            mx_route_available=mx_route_available,
+            comprehensive_intel_available=comprehensive_intel_available,
+            reasons=reasons,
+        )
+
+    def can_search_stock_news(self, stock_code: str = "") -> bool:
+        """Return whether stock-news search can run for the given symbol."""
+        capability = self.get_capability_status()
+        return bool(capability.legacy_available or self._should_use_mx_primary_for_stock_news(stock_code))
+
+    def can_search_comprehensive_intel(self, stock_code: str = "") -> bool:
+        """Return whether comprehensive-intel search can run for the given symbol."""
+        capability = self.get_capability_status()
+        return bool(capability.legacy_available or (capability.mx_route_available and not self._is_foreign_stock(stock_code)))
 
     def _cache_key(self, query: str, max_results: int, days: int) -> str:
         """Build a cache key from query parameters."""
@@ -3825,7 +3867,13 @@ class SearchService:
                 fallback_providers=fallback_providers,
             )
             if filtered_response is None:
-                break
+                logger.warning(
+                    "[情报搜索] %s(%s) 维度 %s 无可用 fallback 响应，跳过该维度并继续后续搜索",
+                    stock_name,
+                    stock_code,
+                    dim['name'],
+                )
+                continue
 
             results[dim['name']] = filtered_response
             search_count += 1
