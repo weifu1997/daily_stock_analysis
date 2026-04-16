@@ -107,6 +107,31 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("中性", out)
         self.assertIn("大户退出但散户未显著接盘", out)
 
+    def test_render_markdown_full_appends_result_level_guardrail_note(self) -> None:
+        r = _make_result(
+            dashboard={
+                "core_conclusion": {"one_sentence": "筹码分散且风险偏多，暂不宜激进买入，先观望确认。"},
+                "intelligence": {"risk_alerts": ["大股东减持", "订单不及预期"]},
+                "battle_plan": {"sniper_points": {"stop_loss": "110"}},
+            }
+        )
+        r.normalization_report = {
+            "applied_rules": [
+                {
+                    "rule_name": "holder-structure",
+                    "changed": True,
+                    "severity": "hard_guardrail",
+                    "reason_code": "holder_structure_distributed_risk_buy_downgraded",
+                    "modified_fields": ["decision_type", "operation_advice"],
+                }
+            ]
+        }
+        out = render("markdown", [r], summary_only=False)
+        self.assertIsNotNone(out)
+        self.assertIn("🛡️ 结论约束", out)
+        self.assertIn("筹码分散且风险偏多，买入建议已降级", out)
+        self.assertNotIn("holder_structure_distributed_risk_buy_downgraded", out)
+
     def test_render_markdown_omits_holder_structure_rows_when_interpretation_missing(self) -> None:
         r = _make_result(
             dashboard={

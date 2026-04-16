@@ -154,6 +154,63 @@ _GENERIC_STOCK_NAME_BY_LANGUAGE = {
     "en": "Unnamed Stock",
 }
 
+_NORMALIZATION_REASON_LABELS = {
+    "portfolio_non_holder_action_adjusted": {
+        "zh": "非持仓标的被纠正为非仓位动作建议",
+        "en": "Non-holder action advice adjusted to non-position guidance",
+    },
+    "portfolio_non_holder_text_adjusted": {
+        "zh": "非持仓标的说明文案已修正",
+        "en": "Non-holder explanatory text adjusted",
+    },
+    "portfolio_context_adjusted": {
+        "zh": "持仓上下文相关建议已修正",
+        "en": "Portfolio-context guidance adjusted",
+    },
+    "decision_signal_normalized": {
+        "zh": "模型决策信号已规范化",
+        "en": "Model decision signal normalized",
+    },
+    "operation_advice_backfilled": {
+        "zh": "操作建议缺失已补齐",
+        "en": "Missing operation advice backfilled",
+    },
+    "decision_consistency_adjusted": {
+        "zh": "决策一致性已修正",
+        "en": "Decision consistency adjusted",
+    },
+    "decision_consistency_no_change": {
+        "zh": "决策一致性校验通过",
+        "en": "Decision consistency check passed",
+    },
+    "portfolio_context_no_change": {
+        "zh": "持仓上下文校验通过",
+        "en": "Portfolio-context check passed",
+    },
+    "holder_structure_distributed_risk_buy_downgraded": {
+        "zh": "筹码分散且风险偏多，买入建议已降级",
+        "en": "Dispersed holder structure with clustered risks downgraded the buy call",
+    },
+    "holder_structure_concentrated_no_intel_buy_softened": {
+        "zh": "筹码集中但缺少催化，过热买入预期已收敛",
+        "en": "Concentrated holder structure without catalysts softened the buy bias",
+    },
+    "holder_structure_adjusted": {
+        "zh": "股东结构约束已修正结论",
+        "en": "Holder-structure guardrail adjusted the conclusion",
+    },
+    "holder_structure_no_change": {
+        "zh": "股东结构约束校验通过",
+        "en": "Holder-structure guardrail check passed",
+    },
+    "no_change": {
+        "zh": "未发生修正",
+        "en": "No normalization change",
+    },
+}
+
+_GUARDRAIL_SEVERITIES = {"warning", "hard_guardrail"}
+
 _REPORT_LABELS: Dict[str, Dict[str, str]] = {
     "zh": {
         "dashboard_title": "决策仪表盘",
@@ -555,3 +612,37 @@ def get_sentiment_label(score: int, language: Optional[str]) -> str:
     if score >= 20:
         return "悲观"
     return "极度悲观"
+
+
+
+def localize_normalization_reason_code(reason_code: Any, language: Optional[str]) -> str:
+    normalized_language = normalize_report_language(language)
+    code = str(reason_code or "").strip()
+    if not code:
+        return "Unknown" if normalized_language == "en" else "未知原因"
+    localized = _NORMALIZATION_REASON_LABELS.get(code, {})
+    return str(localized.get(normalized_language) or code)
+
+
+
+def get_result_guardrail_messages(normalization_report: Any, language: Optional[str]) -> list[str]:
+    if not isinstance(normalization_report, dict):
+        return []
+    applied_rules = normalization_report.get("applied_rules")
+    if not isinstance(applied_rules, list):
+        return []
+
+    messages: list[str] = []
+    seen = set()
+    for item in applied_rules:
+        if not isinstance(item, dict) or not item.get("changed"):
+            continue
+        severity = str(item.get("severity") or "").strip().lower()
+        if severity not in _GUARDRAIL_SEVERITIES:
+            continue
+        reason_label = localize_normalization_reason_code(item.get("reason_code"), language)
+        if not reason_label or reason_label in seen:
+            continue
+        seen.add(reason_label)
+        messages.append(reason_label)
+    return messages

@@ -22,6 +22,11 @@
 📌 **{{ one_sentence[:80] }}**
 {% endif %}
 
+{% set guardrail_messages = get_result_guardrail_messages(result.normalization_report, report_language) %}
+{% if guardrail_messages %}
+🛡️ {{ '结论约束' if report_language != 'en' else 'Conclusion Guardrail' }}: {{ guardrail_messages|join('；' if report_language != 'en' else '; ') }}
+{% endif %}
+
 {% if intel.get('earnings_outlook') %}
 📊 {{ labels.earnings_outlook_label }}: {{ intel.earnings_outlook[:60] }}
 {% endif %}

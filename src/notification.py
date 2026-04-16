@@ -24,9 +24,11 @@ from src.enums import ReportType
 from src.report_language import (
     get_localized_stock_name,
     get_report_labels,
+    get_result_guardrail_messages,
     infer_decision_type_from_advice,
     get_signal_level,
     localize_chip_health,
+    localize_normalization_reason_code,
     localize_operation_advice,
     localize_trend_prediction,
     normalize_report_language,
@@ -46,61 +48,6 @@ from src.notification_sender import (
 )
 
 logger = logging.getLogger(__name__)
-
-_NORMALIZATION_REASON_LABELS = {
-    "portfolio_non_holder_action_adjusted": {
-        "zh": "非持仓标的被纠正为非仓位动作建议",
-        "en": "Non-holder action advice adjusted to non-position guidance",
-    },
-    "portfolio_non_holder_text_adjusted": {
-        "zh": "非持仓标的说明文案已修正",
-        "en": "Non-holder explanatory text adjusted",
-    },
-    "portfolio_context_adjusted": {
-        "zh": "持仓上下文相关建议已修正",
-        "en": "Portfolio-context guidance adjusted",
-    },
-    "decision_signal_normalized": {
-        "zh": "模型决策信号已规范化",
-        "en": "Model decision signal normalized",
-    },
-    "operation_advice_backfilled": {
-        "zh": "操作建议缺失已补齐",
-        "en": "Missing operation advice backfilled",
-    },
-    "decision_consistency_adjusted": {
-        "zh": "决策一致性已修正",
-        "en": "Decision consistency adjusted",
-    },
-    "decision_consistency_no_change": {
-        "zh": "决策一致性校验通过",
-        "en": "Decision consistency check passed",
-    },
-    "portfolio_context_no_change": {
-        "zh": "持仓上下文校验通过",
-        "en": "Portfolio-context check passed",
-    },
-    "holder_structure_distributed_risk_buy_downgraded": {
-        "zh": "筹码分散且风险偏多，买入建议已降级",
-        "en": "Dispersed holder structure with clustered risks downgraded the buy call",
-    },
-    "holder_structure_concentrated_no_intel_buy_softened": {
-        "zh": "筹码集中但缺少催化，过热买入预期已收敛",
-        "en": "Concentrated holder structure without catalysts softened the buy bias",
-    },
-    "holder_structure_adjusted": {
-        "zh": "股东结构约束已修正结论",
-        "en": "Holder-structure guardrail adjusted the conclusion",
-    },
-    "holder_structure_no_change": {
-        "zh": "股东结构约束校验通过",
-        "en": "Holder-structure guardrail check passed",
-    },
-    "no_change": {
-        "zh": "未发生修正",
-        "en": "No normalization change",
-    },
-}
 
 
 class NotificationChannel(Enum):
@@ -300,12 +247,15 @@ class NotificationService(
         return list(dict.fromkeys(models))
 
     def _localize_normalization_reason_code(self, reason_code: Optional[str], report_language: str) -> str:
-        normalized_language = "en" if report_language == "en" else "zh"
-        code = str(reason_code or "").strip()
-        if not code:
-            return "Unknown" if normalized_language == "en" else "未知原因"
-        localized = _NORMALIZATION_REASON_LABELS.get(code, {})
-        return str(localized.get(normalized_language) or code)
+        return localize_normalization_reason_code(reason_code, report_language)
+
+    def _render_result_guardrail_note(self, result: AnalysisResult, report_language: str) -> List[str]:
+        messages = get_result_guardrail_messages(getattr(result, "normalization_report", None), report_language)
+        if not messages:
+            return []
+        heading = "Conclusion Guardrail" if report_language == "en" else "结论约束"
+        separator = "; " if report_language == "en" else "；"
+        return [f"🛡️ {heading}：{separator.join(messages)}", ""]
 
     def _format_top_normalization_reasons(
         self,
@@ -1034,6 +984,7 @@ class NotificationService(
                     "> 以下信号为日终分析结果，默认用于次一交易日执行，不代表当晚立即交易。",
                     "",
                 ])
+                report_lines.extend(self._render_result_guardrail_note(result, report_language))
                 # 持仓分类建议
                 if pos_advice:
                     report_lines.extend([
@@ -1311,6 +1262,10 @@ class NotificationService(
                 if one_sentence:
                     lines.append(f"📌 **{one_sentence[:80]}**")
                     lines.append("")
+                
+                guardrail_lines = self._render_result_guardrail_note(result, report_language)
+                if guardrail_lines:
+                    lines.extend(guardrail_lines)
                 
                 # 重要信息区（舆情+基本面）
                 info_lines = []

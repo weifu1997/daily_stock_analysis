@@ -59,6 +59,11 @@
 
 ⏰ **{{ labels.time_sensitivity_label }}**: {{ core.get('time_sensitivity', labels.default_time_sensitivity) }}
 
+{% set guardrail_messages = get_result_guardrail_messages(result.normalization_report, report_language) %}
+{% if guardrail_messages %}
+**🛡️ {{ '结论约束' if report_language != 'en' else 'Conclusion Guardrail' }}**: {{ guardrail_messages|join('；' if report_language != 'en' else '; ') }}
+{% endif %}
+
 {% set pos_advice = core.get('position_advice', {}) %}
 {% if pos_advice %}
 | {{ labels.position_status_label }} | {{ labels.action_advice_label }} |
