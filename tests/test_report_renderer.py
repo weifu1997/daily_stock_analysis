@@ -90,6 +90,8 @@ class TestReportRenderer(unittest.TestCase):
                         "holder_num": 41060,
                         "holder_num_change": -81,
                         "holder_num_end_date": "2026-04-10",
+                        "holder_structure_bias": "中性",
+                        "holder_structure_note": "前十大净减持 + 户数下降，存在大户退出但散户未显著接盘，筹码并非简单分散。",
                     }
                 },
             }
@@ -101,6 +103,49 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("-4484943.0", out)
         self.assertIn("股东户数变动", out)
         self.assertIn("-81", out)
+        self.assertIn("持有人结构倾向", out)
+        self.assertIn("中性", out)
+        self.assertIn("大户退出但散户未显著接盘", out)
+
+    def test_render_markdown_omits_holder_structure_rows_when_interpretation_missing(self) -> None:
+        r = _make_result(
+            dashboard={
+                "core_conclusion": {"one_sentence": "筹码仍需观察"},
+                "intelligence": {"risk_alerts": []},
+                "battle_plan": {"sniper_points": {"stop_loss": "110"}},
+                "data_perspective": {
+                    "institution_structure": {
+                        "holder_num": 41060,
+                        "holder_num_end_date": "2026-04-10",
+                    }
+                },
+            }
+        )
+        out = render("markdown", [r], summary_only=False)
+        self.assertIsNotNone(out)
+        self.assertNotIn("| 持有人结构倾向 | N/A |", out)
+        self.assertNotIn("| 结构解读 | N/A |", out)
+
+    def test_render_markdown_omits_holder_structure_rows_for_placeholder_strings(self) -> None:
+        r = _make_result(
+            dashboard={
+                "core_conclusion": {"one_sentence": "筹码仍需观察"},
+                "intelligence": {"risk_alerts": []},
+                "battle_plan": {"sniper_points": {"stop_loss": "110"}},
+                "data_perspective": {
+                    "institution_structure": {
+                        "holder_num": 41060,
+                        "holder_num_end_date": "2026-04-10",
+                        "holder_structure_bias": "N/A",
+                        "holder_structure_note": "data unavailable",
+                    }
+                },
+            }
+        )
+        out = render("markdown", [r], summary_only=False)
+        self.assertIsNotNone(out)
+        self.assertNotIn("| 持有人结构倾向 | N/A |", out)
+        self.assertNotIn("data unavailable", out)
 
     def test_render_wechat(self) -> None:
         """Wechat platform renders."""

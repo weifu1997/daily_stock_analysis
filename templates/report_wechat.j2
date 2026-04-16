@@ -48,6 +48,12 @@
 🏦 **{{ '机构/股东结构' if report_language != 'en' else 'Institution / Holder Structure' }}**:
    • {{ '前十大股东净变动' if report_language != 'en' else 'Top10 Holder Net Change' }}: {{ institution.get('top10_holder_change', 'N/A') }}
    • {{ '股东户数变动' if report_language != 'en' else 'Holder Count Change' }}: {{ institution.get('holder_num_change', 'N/A') }}
+{% if institution.get('holder_structure_bias') and institution.get('holder_structure_bias')|string|lower not in ['n/a', 'na', 'none', 'null', 'unknown', 'tbd', 'data unavailable', '数据缺失', '未知', ''] %}
+   • {{ '持有人结构倾向' if report_language != 'en' else 'Holder Structure Bias' }}: {{ institution.get('holder_structure_bias') }}
+{% endif %}
+{% if institution.get('holder_structure_note') and institution.get('holder_structure_note')|string|lower not in ['n/a', 'na', 'none', 'null', 'unknown', 'tbd', 'data unavailable', '数据缺失', '未知', ''] %}
+   • {{ '结构解读' if report_language != 'en' else 'Structure Note' }}: {{ institution.get('holder_structure_note') }}
+{% endif %}
 {% endif %}
 
 {% set sniper = battle.get('sniper_points', {}) if battle else {} %}

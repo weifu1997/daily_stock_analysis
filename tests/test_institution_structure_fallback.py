@@ -48,6 +48,106 @@ class TestInstitutionStructureFallback(unittest.TestCase):
         self.assertEqual(institution["holder_num_change"], -81)
         self.assertEqual(institution["holder_num_end_date"], "2026-04-10")
 
+    def test_fill_institution_structure_derives_bias_and_note_for_conflicting_signals(self) -> None:
+        result = self._make_result(dashboard={"data_perspective": {}})
+        fundamental_context = {
+            "institution": {
+                "data": {
+                    "top10_holder_change": -4484943.0,
+                    "holder_num": 41060,
+                    "holder_num_change": -81,
+                    "holder_num_end_date": "2026-04-10",
+                }
+            }
+        }
+
+        fill_institution_structure_if_needed(result, fundamental_context)
+
+        institution = result.dashboard["data_perspective"]["institution_structure"]
+        self.assertEqual(institution["holder_structure_bias"], "中性")
+        self.assertIn("前十大净减持", institution["holder_structure_note"])
+        self.assertIn("户数下降", institution["holder_structure_note"])
+        self.assertIn("大户退出", institution["holder_structure_note"])
+
+    def test_fill_institution_structure_treats_zero_as_real_signal_not_missing(self) -> None:
+        result = self._make_result(dashboard={"data_perspective": {}})
+        fundamental_context = {
+            "institution": {
+                "data": {
+                    "top10_holder_change": 0.0,
+                    "holder_num_change": -81,
+                }
+            }
+        }
+
+        fill_institution_structure_if_needed(result, fundamental_context)
+
+        institution = result.dashboard["data_perspective"]["institution_structure"]
+        self.assertEqual(institution["holder_structure_bias"], "集中")
+        self.assertEqual(institution["top10_holder_change"], 0.0)
+        self.assertIn("前十大基本持平", institution["holder_structure_note"])
+        self.assertNotIn("缺失", institution["holder_structure_note"])
+
+    def test_fill_institution_structure_skips_interpretation_when_only_zero_single_signal_exists(self) -> None:
+        result = self._make_result(dashboard={"data_perspective": {}})
+        fundamental_context = {
+            "institution": {
+                "data": {
+                    "holder_num_change": 0,
+                }
+            }
+        }
+
+        fill_institution_structure_if_needed(result, fundamental_context)
+
+        institution = result.dashboard["data_perspective"]["institution_structure"]
+        self.assertEqual(institution["holder_num_change"], 0)
+        self.assertNotIn("holder_structure_bias", institution)
+        self.assertNotIn("holder_structure_note", institution)
+
+    def test_fill_institution_structure_skips_interpretation_when_core_signals_missing(self) -> None:
+        result = self._make_result(dashboard={"data_perspective": {}})
+        fundamental_context = {
+            "institution": {
+                "data": {
+                    "holder_num": 41060,
+                    "holder_num_end_date": "2026-04-10",
+                }
+            }
+        }
+
+        fill_institution_structure_if_needed(result, fundamental_context)
+
+        institution = result.dashboard["data_perspective"]["institution_structure"]
+        self.assertEqual(institution["holder_num"], 41060)
+        self.assertNotIn("holder_structure_bias", institution)
+        self.assertNotIn("holder_structure_note", institution)
+
+    def test_fill_institution_structure_overwrites_data_unavailable_placeholder(self) -> None:
+        result = self._make_result(
+            dashboard={
+                "data_perspective": {
+                    "institution_structure": {
+                        "top10_holder_change": "data unavailable",
+                    }
+                }
+            }
+        )
+        fundamental_context = {
+            "institution": {
+                "data": {
+                    "top10_holder_change": 123.0,
+                    "holder_num_change": -1,
+                }
+            }
+        }
+
+        fill_institution_structure_if_needed(result, fundamental_context)
+
+        institution = result.dashboard["data_perspective"]["institution_structure"]
+        self.assertEqual(institution["top10_holder_change"], 123.0)
+        self.assertEqual(institution["holder_structure_bias"], "集中")
+
 
 if __name__ == "__main__":
     unittest.main()

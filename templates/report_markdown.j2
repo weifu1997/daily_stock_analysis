@@ -111,6 +111,12 @@
 | {{ '最新股东户数' if report_language != 'en' else 'Latest Holder Count' }} | {{ institution_data.get('holder_num', 'N/A') }} |
 | {{ '股东户数变动' if report_language != 'en' else 'Holder Count Change' }} | {{ institution_data.get('holder_num_change', 'N/A') }} |
 | {{ '统计截止日' if report_language != 'en' else 'As Of Date' }} | {{ institution_data.get('holder_num_end_date', 'N/A') }} |
+{% if institution_data.get('holder_structure_bias') and institution_data.get('holder_structure_bias')|string|lower not in ['n/a', 'na', 'none', 'null', 'unknown', 'tbd', 'data unavailable', '数据缺失', '未知', ''] %}
+| {{ '持有人结构倾向' if report_language != 'en' else 'Holder Structure Bias' }} | {{ institution_data.get('holder_structure_bias') }} |
+{% endif %}
+{% if institution_data.get('holder_structure_note') and institution_data.get('holder_structure_note')|string|lower not in ['n/a', 'na', 'none', 'null', 'unknown', 'tbd', 'data unavailable', '数据缺失', '未知', ''] %}
+| {{ '结构解读' if report_language != 'en' else 'Structure Note' }} | {{ institution_data.get('holder_structure_note') }} |
+{% endif %}
 {% endif %}
 
 {% set adj_data = data_persp.get('adj_structure', {}) %}

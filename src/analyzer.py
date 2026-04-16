@@ -241,7 +241,115 @@ _INSTITUTION_KEYS: tuple = (
     "holder_num_end_date",
     "holder_num_ann_date",
     "institution_holding_change",
+    "holder_structure_bias",
+    "holder_structure_note",
 )
+
+
+def _derive_holder_structure_summary(institution_data: Dict[str, Any]) -> Dict[str, str]:
+    """Derive human-readable holder structure interpretation from institution signals."""
+    if not isinstance(institution_data, dict):
+        return {}
+
+    def _read_signal(key: str) -> Optional[float]:
+        raw_value = institution_data.get(key)
+        if raw_value is None:
+            return None
+        if isinstance(raw_value, str) and raw_value.strip().lower() in {
+            "",
+            "n/a",
+            "na",
+            "none",
+            "null",
+            "unknown",
+            "tbd",
+            "data unavailable",
+            "数据缺失",
+            "未知",
+        }:
+            return None
+        return _safe_float(raw_value, default=None)
+
+    top10_change = _read_signal("top10_holder_change")
+    top10_label = "前十大"
+    if top10_change is None:
+        top10_change = _read_signal("top10_float_holder_change")
+        top10_label = "前十大流通股东"
+    holder_num_change = _read_signal("holder_num_change")
+
+    def _sign(value: Optional[float]) -> int:
+        if value is None:
+            return 0
+        if value > 0:
+            return 1
+        if value < 0:
+            return -1
+        return 0
+
+    known_signal_count = sum(value is not None for value in (top10_change, holder_num_change))
+    if known_signal_count == 0:
+        return {}
+    if known_signal_count == 1 and (top10_change == 0 or holder_num_change == 0):
+        return {}
+
+    top10_sign = _sign(top10_change)
+    holder_sign = _sign(holder_num_change)
+
+    if top10_sign == 0 and holder_sign == 0:
+        return {
+            "holder_structure_bias": "中性",
+            "holder_structure_note": "前十大与股东户数均基本持平，机构/股东结构变化不明显。",
+        }
+
+    if top10_sign > 0 and holder_sign < 0:
+        return {
+            "holder_structure_bias": "集中",
+            "holder_structure_note": f"{top10_label}净增持 + 户数下降，筹码向核心持有人集中，结构偏强。",
+        }
+    if top10_sign < 0 and holder_sign > 0:
+        return {
+            "holder_structure_bias": "分散",
+            "holder_structure_note": f"{top10_label}净减持 + 户数上升，筹码扩散，需警惕大户退出后被更分散资金承接。",
+        }
+    if top10_sign < 0 and holder_sign < 0:
+        return {
+            "holder_structure_bias": "中性",
+            "holder_structure_note": f"{top10_label}净减持 + 户数下降，存在大户退出但散户未显著接盘，筹码并非简单分散。",
+        }
+    if top10_sign > 0 and holder_sign > 0:
+        return {
+            "holder_structure_bias": "中性",
+            "holder_structure_note": f"{top10_label}净增持 + 户数上升，说明增量资金并非只来自核心持有人，集中度改善有限。",
+        }
+    if top10_sign == 0 and holder_sign < 0:
+        return {
+            "holder_structure_bias": "集中",
+            "holder_structure_note": f"{top10_label}基本持平 + 户数下降，筹码向存量持有人集中，但未见前十大明显增持。",
+        }
+    if top10_sign == 0 and holder_sign > 0:
+        return {
+            "holder_structure_bias": "分散",
+            "holder_structure_note": f"{top10_label}基本持平 + 户数上升，筹码趋于分散，但未见前十大明显减持。",
+        }
+    if top10_sign > 0:
+        return {
+            "holder_structure_bias": "集中",
+            "holder_structure_note": f"{top10_label}净增持，但户数变化缺失，暂按筹码偏集中理解。",
+        }
+    if top10_sign < 0:
+        return {
+            "holder_structure_bias": "分散",
+            "holder_structure_note": f"{top10_label}净减持，但户数变化缺失，暂按筹码偏分散理解。",
+        }
+    if holder_sign < 0:
+        return {
+            "holder_structure_bias": "集中",
+            "holder_structure_note": "股东户数下降，但前十大净变动缺失，暂按筹码偏集中理解。",
+        }
+    return {
+        "holder_structure_bias": "分散",
+        "holder_structure_note": "股东户数上升，但前十大净变动缺失，暂按筹码偏分散理解。",
+    }
 
 
 def fill_institution_structure_if_needed(result: "AnalysisResult", fundamental_context: Any) -> None:
@@ -260,9 +368,32 @@ def fill_institution_structure_if_needed(result: "AnalysisResult", fundamental_c
         dash["data_perspective"] = dp
         current = dp.get("institution_structure") or {}
         merged = dict(current)
+        derived = _derive_holder_structure_summary(institution_data)
+
+        def _is_institution_missing(value: Any) -> bool:
+            if value is None:
+                return True
+            if isinstance(value, str):
+                return value.strip().lower() in {
+                    "",
+                    "n/a",
+                    "na",
+                    "none",
+                    "null",
+                    "unknown",
+                    "tbd",
+                    "data unavailable",
+                    "数据缺失",
+                    "未知",
+                }
+            return False
+
         for key in _INSTITUTION_KEYS:
-            if _is_value_placeholder(merged.get(key)) and not _is_value_placeholder(institution_data.get(key)):
-                merged[key] = institution_data.get(key)
+            source_value = institution_data.get(key)
+            if key in derived:
+                source_value = derived.get(key)
+            if _is_institution_missing(merged.get(key)) and not _is_institution_missing(source_value):
+                merged[key] = source_value
         if merged:
             dp["institution_structure"] = merged
             logger.info("[institution_structure] Filled institution fields from fundamental_context")
@@ -1836,6 +1967,16 @@ class GeminiAnalyzer:
 > 优先以结构化披露日期判断业绩催化时点；若与新闻时间冲突，以结构化日期为准。
 """
             if institution_data:
+                holder_structure_summary = _derive_holder_structure_summary(institution_data)
+                holder_structure_rows = ""
+                if holder_structure_summary.get("holder_structure_bias"):
+                    holder_structure_rows += (
+                        f"| 持有人结构倾向 | {holder_structure_summary.get('holder_structure_bias')} | 集中 / 分散 / 中性 |\n"
+                    )
+                if holder_structure_summary.get("holder_structure_note"):
+                    holder_structure_rows += (
+                        f"| 结构解读 | {holder_structure_summary.get('holder_structure_note')} | 优先基于结构化信号，不要脑补 |\n"
+                    )
                 prompt += f"""
 ### 机构/股东结构（结构化）
 | 指标 | 数值 | 说明 |
@@ -1845,8 +1986,8 @@ class GeminiAnalyzer:
 | 最新股东户数 | {institution_data.get('holder_num', 'N/A')} | |
 | 股东户数变动 | {institution_data.get('holder_num_change', 'N/A')} | 单位：户；负数通常代表筹码趋于集中 |
 | 股东户数统计截止日 | {institution_data.get('holder_num_end_date', 'N/A')} | |
-
-> 请结合前十大股东净变动与股东户数变动判断筹码分散/集中趋势；若字段缺失，明确写“数据缺失，无法判断”。
+{holder_structure_rows}
+> 请结合前十大股东净变动与股东户数变动判断筹码分散/集中趋势；优先参考“持有人结构倾向/结构解读”，若字段缺失，明确写“数据缺失，无法判断”。
 """
 
         financial_filter_summary = context.get("financial_filter_summary") if isinstance(context, dict) else None

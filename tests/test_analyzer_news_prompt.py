@@ -155,7 +155,39 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("机构/股东结构（结构化）", prompt)
         self.assertIn("前十大股东净变动 | -4484943.0", prompt)
         self.assertIn("股东户数变动 | -81", prompt)
+        self.assertIn("持有人结构倾向 | 中性", prompt)
+        self.assertIn("前十大净减持 + 户数下降", prompt)
         self.assertIn("请结合前十大股东净变动与股东户数变动判断筹码分散/集中趋势", prompt)
+
+    def test_prompt_omits_holder_structure_rows_when_interpretation_missing(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer()
+
+        context = {
+            "code": "002906",
+            "stock_name": "华阳集团",
+            "date": "2026-03-16",
+            "today": {},
+            "fundamental_context": {
+                "earnings": {"data": {"financial_report": {"report_date": "2025-12-31", "revenue": 1000}}},
+                "institution": {
+                    "data": {
+                        "holder_num": 41060,
+                        "holder_num_end_date": "2026-04-10",
+                    }
+                },
+            },
+        }
+        fake_cfg = SimpleNamespace(
+            news_max_age_days=30,
+            news_strategy_profile="medium",
+        )
+        with patch("src.analyzer.get_config", return_value=fake_cfg):
+            prompt = analyzer._format_prompt(context, "华阳集团", news_context="news")
+
+        self.assertIn("机构/股东结构（结构化）", prompt)
+        self.assertNotIn("持有人结构倾向 | N/A", prompt)
+        self.assertNotIn("结构解读 | N/A", prompt)
 
     def test_prompt_prefers_context_news_window_days(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
