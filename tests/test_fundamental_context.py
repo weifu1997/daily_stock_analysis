@@ -87,8 +87,7 @@ class TestFundamentalContext(unittest.TestCase):
         }
         with patch("src.config.get_config", return_value=cfg), \
                 patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch(
-                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle",
+                patch.object(manager._fundamental_adapter, "get_fundamental_bundle",
                     return_value=bundle,
                 ):
             ctx = manager.get_fundamental_context("159915")
@@ -137,7 +136,7 @@ class TestFundamentalContext(unittest.TestCase):
         )
         with patch("src.config.get_config", return_value=cfg), \
                 patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch("data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle", return_value={
+                patch.object(manager._fundamental_adapter, "get_fundamental_bundle", return_value={
                     "growth": {"revenue_yoy": 10.1, "net_profit_yoy": 8.5},
                     "earnings": {"forecast_summary": "预增"},
                     "institution": {"institution_holding_change": 1.2},
@@ -173,7 +172,7 @@ class TestFundamentalContext(unittest.TestCase):
         )
         with patch("src.config.get_config", return_value=cfg), \
                 patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch("data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle", return_value={
+                patch.object(manager._fundamental_adapter, "get_fundamental_bundle", return_value={
                     "status": "partial",
                     "growth": {},
                     "earnings": {
@@ -215,7 +214,7 @@ class TestFundamentalContext(unittest.TestCase):
         )
         with patch("src.config.get_config", return_value=cfg), \
                 patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch("data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle", return_value={
+                patch.object(manager._fundamental_adapter, "get_fundamental_bundle", return_value={
                     "status": "partial",
                     "growth": {},
                     "earnings": {
@@ -277,8 +276,7 @@ class TestFundamentalContext(unittest.TestCase):
 
         with patch("src.config.get_config", return_value=cfg), \
                 patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch(
-                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle",
+                patch.object(manager._fundamental_adapter, "get_fundamental_bundle",
                     return_value=bundle,
                 ), \
                 patch.object(manager, "get_capital_flow_context", side_effect=_capital_flow_side_effect), \
@@ -361,8 +359,7 @@ class TestFundamentalContext(unittest.TestCase):
         }
         with patch("src.config.get_config", return_value=cfg), \
                 patch.object(manager, "get_realtime_quote", return_value=quote), \
-                patch(
-                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle",
+                patch.object(manager._fundamental_adapter, "get_fundamental_bundle",
                     return_value=bundle,
                 ):
             ctx = manager.get_fundamental_context("600519")
@@ -404,8 +401,7 @@ class TestFundamentalContext(unittest.TestCase):
             fundamental_retry_max=1,
         )
         with patch("src.config.get_config", return_value=cfg), \
-                patch(
-                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_capital_flow",
+                patch.object(manager._fundamental_adapter, "get_capital_flow",
                     return_value={
                         "status": "not_supported",
                         "stock_flow": {},

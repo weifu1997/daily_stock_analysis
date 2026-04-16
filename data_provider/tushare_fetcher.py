@@ -269,6 +269,60 @@ class TushareFetcher(BaseFetcher):
         """返回上海时区当前时间，方便测试覆盖跨日刷新逻辑。"""
         return datetime.now(ZoneInfo("Asia/Shanghai"))
 
+    def _to_ts_code(self, stock_code: str) -> str:
+        code = normalize_stock_code(stock_code)
+        upper = (stock_code or "").strip().upper()
+        if upper.endswith((".SH", ".SZ", ".BJ")):
+            return upper
+        exchange_hint = self._detect_exchange_hint(stock_code)
+        if exchange_hint:
+            return f"{code}.{exchange_hint}"
+        if code.startswith(("60", "68")):
+            exchange = "SH"
+        elif code.startswith(("00", "30")):
+            exchange = "SZ"
+        elif code.startswith(("43", "83", "87", "92")):
+            exchange = "BJ"
+        else:
+            exchange = "SZ"
+        return f"{code}.{exchange}"
+
+    def get_income_df(self, stock_code: str, period: Optional[str] = None) -> pd.DataFrame:
+        params = {"ts_code": self._to_ts_code(stock_code)}
+        if period:
+            params["period"] = period
+        return self._call_api_with_rate_limit("income", **params)
+
+    def get_fina_indicator_df(self, stock_code: str, period: Optional[str] = None) -> pd.DataFrame:
+        params = {"ts_code": self._to_ts_code(stock_code)}
+        if period:
+            params["period"] = period
+        return self._call_api_with_rate_limit("fina_indicator", **params)
+
+    def get_cashflow_df(self, stock_code: str, period: Optional[str] = None) -> pd.DataFrame:
+        params = {"ts_code": self._to_ts_code(stock_code)}
+        if period:
+            params["period"] = period
+        return self._call_api_with_rate_limit("cashflow", **params)
+
+    def get_forecast_df(self, stock_code: str, period: Optional[str] = None) -> pd.DataFrame:
+        params = {"ts_code": self._to_ts_code(stock_code)}
+        if period:
+            params["period"] = period
+        return self._call_api_with_rate_limit("forecast", **params)
+
+    def get_express_df(self, stock_code: str, period: Optional[str] = None) -> pd.DataFrame:
+        params = {"ts_code": self._to_ts_code(stock_code)}
+        if period:
+            params["period"] = period
+        return self._call_api_with_rate_limit("express", **params)
+
+    def get_disclosure_date_df(self, stock_code: str, period: Optional[str] = None) -> pd.DataFrame:
+        params = {"ts_code": self._to_ts_code(stock_code)}
+        if period:
+            params["end_date"] = period
+        return self._call_api_with_rate_limit("disclosure_date", **params)
+
     def _get_trade_dates(self, end_date: Optional[str] = None) -> List[str]:
         """按自然日刷新交易日历缓存，避免服务跨日后继续复用旧日历。"""
         if self._api is None:

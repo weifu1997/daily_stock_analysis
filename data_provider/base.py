@@ -26,6 +26,8 @@ import pandas as pd
 import numpy as np
 from src.data.stock_mapping import STOCK_NAME_MAP, is_meaningful_stock_name
 from .fundamental_adapter import AkshareFundamentalAdapter
+from .tushare_fundamental_adapter import TushareFundamentalAdapter
+from .composite_fundamental_adapter import CompositeFundamentalAdapter
 from .chip_estimator import estimate_chip_distribution
 
 # 配置日志
@@ -503,7 +505,11 @@ class DataFetcherManager:
         else:
             # 默认数据源将在首次使用时延迟加载
             self._init_default_fetchers()
-        self._fundamental_adapter = AkshareFundamentalAdapter()
+        self._fundamental_adapter = CompositeFundamentalAdapter(
+            primary=TushareFundamentalAdapter(),
+            secondary=AkshareFundamentalAdapter(),
+            merge_secondary_bundle=False,
+        )
         self._tickflow_fetcher = None
         self._tickflow_api_key: Optional[str] = None
         self._tickflow_lock = RLock()
