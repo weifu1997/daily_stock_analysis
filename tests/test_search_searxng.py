@@ -520,6 +520,41 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertEqual([r.title for r in resp.results], ["正常新闻"])
 
     @patch("src.search_service._get_with_retry")
+    def test_skips_betting_shell_and_official_site_placeholder_pages(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "沙巴体育网(中国)官方网站IOS/安卓通用版/APP下载",
+                        "url": "https://xtleyang.com/app/123",
+                        "content": "2026-04-18 沙巴体育最新网址、注册登录与APP下载入口。",
+                    },
+                    {
+                        "title": "平安银行官方网站",
+                        "url": "https://bank.pingan.com/",
+                        "content": "平安银行官方网站，提供存款、贷款、信用卡、理财等服务。",
+                    },
+                    {
+                        "title": "银行公司业务-平安银行 - Ping An Bank",
+                        "url": "https://bank.pingan.com/gongsi/index.shtml",
+                        "content": "平安银行公司业务介绍页面，涵盖账户、结算、贸易融资等服务。",
+                    },
+                    {
+                        "title": "正常业绩新闻",
+                        "url": "https://finance.example.com/earnings/000001",
+                        "content": "2026-04-19 平安银行发布一季度业绩快报，营收与利润表现稳健。",
+                    },
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("平安银行 业绩预告 财报 营收 净利润 同比增长", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual([r.title for r in resp.results], ["正常业绩新闻"])
+
+    @patch("src.search_service._get_with_retry")
     def test_does_not_treat_bare_eight_digit_identifier_as_date(self, mock_get):
         mock_get.return_value = self._response(
             json_payload={

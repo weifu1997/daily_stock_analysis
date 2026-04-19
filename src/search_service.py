@@ -1918,9 +1918,23 @@ class SearXNGSearchProvider(BaseSearchProvider):
             "hga",
             "会员注册",
             "博彩",
+            "沙巴体育",
+            "体育网",
+            "app下载",
+            "注册登录",
         )
 
         if any(marker in title_lower or marker in content_lower or marker in url.lower() for marker in spam_markers):
+            return True
+
+        if source_lower.endswith("xtleyang.com"):
+            return True
+
+        if source_lower.endswith("bank.pingan.com") and (
+            title in ("平安银行官方网站", "银行公司业务-平安银行 - Ping An Bank")
+            or url.rstrip("/").lower() == "https://bank.pingan.com"
+            or "/gongsi/" in url.lower()
+        ):
             return True
 
         if title == "百家号" and "we would like to show you a description here" in content_lower:
