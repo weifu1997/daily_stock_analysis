@@ -487,8 +487,8 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             ["announcement_item"],
         )
 
-    def test_announcements_dimension_uses_news_topic_and_strict_filter(self) -> None:
-        """announcements uses tavily_topic='news' and strict_freshness=True."""
+    def test_announcements_dimension_uses_news_topic_and_keeps_history_for_non_etf(self) -> None:
+        """announcements uses tavily_topic='news' but A股公告维度不应被短窗口清空历史公告。"""
         fresh_dt = datetime.now(timezone.utc).replace(microsecond=0)
         fresh_text = fresh_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         old = (datetime.now().date() - timedelta(days=30)).isoformat()
@@ -512,10 +512,40 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             )
 
         self.assertIn("announcements", intel)
-        # strict_freshness=True: stale result is filtered out
         titles = [item.title for item in intel["announcements"].results]
-        self.assertNotIn("old_announcement", titles)
+        self.assertIn("old_announcement", titles)
         self.assertIn("fresh_announcement", titles)
+        # 仍然按日期新到旧排序
+        self.assertEqual(titles[0], "fresh_announcement")
+        self.assertEqual(titles[1], "old_announcement")
+
+    def test_announcements_dimension_keeps_old_mx_results_for_non_etf(self) -> None:
+        """公告维度对 A 股不应像 latest_news 一样严格按 3 天窗口清空旧公告。"""
+        fresh_dt = datetime.now(timezone.utc).replace(microsecond=0)
+        fresh_text = fresh_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        old = (datetime.now().date() - timedelta(days=30)).isoformat()
+
+        service, mock_search = self._create_service_with_mock_provider(
+            news_max_age_days=3,
+            news_strategy_profile="short",
+        )
+        mock_search.side_effect = [
+            _response([_result("latest_news", fresh_text)]),
+            _response([_result("market_analysis", None)]),
+            _response([_result("risk_check", fresh_text)]),
+            _response([_result("old_announcement", old)]),
+        ]
+
+        with patch("src.search_service.time.sleep"):
+            intel = service.search_comprehensive_intel(
+                stock_code="600519",
+                stock_name="贵州茅台",
+                max_searches=4,
+            )
+
+        self.assertIn("announcements", intel)
+        self.assertEqual([item.title for item in intel["announcements"].results], ["old_announcement"])
+        self.assertEqual(intel["announcements"].results[0].published_date, old)
 
     def test_announcements_etf_is_not_strict(self) -> None:
         """For ETF, announcements dimension also uses tavily_topic='news' and strict_freshness=True."""

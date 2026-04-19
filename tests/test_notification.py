@@ -72,8 +72,7 @@ class TestNotificationServiceSendToMethods(unittest.TestCase):
 
     4. 使用 assertTrue 检查 send 的返回值。
 
-    5. 使用 assert_called_once 检查请求函数是否被调用一次。
-    测试分批发送时，使用 assertAlmostEqual(mock_post.call_count, ...) 检查请求函数被调用次数
+    测试分批发送时，不要直接断言 requests.post 总调用次数；应按目标 webhook 过滤后再检查对应渠道的调用次数
 
     """
 
@@ -569,7 +568,8 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         ok = service.send("hello feishu")
 
         self.assertTrue(ok)
-        mock_post.assert_called_once()
+        feishu_calls = [call for call in mock_post.call_args_list if call.args and call.args[0] == "https://feishu.example"]
+        self.assertEqual(len(feishu_calls), 1)
         
     @mock.patch("src.notification.get_config")
     @mock.patch("requests.post")
@@ -584,7 +584,8 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         ok = service.send("A" * 6000)
 
         self.assertTrue(ok)
-        self.assertAlmostEqual(mock_post.call_count, 4, delta=1)
+        feishu_calls = [call for call in mock_post.call_args_list if call.args and call.args[0] == "https://feishu.example"]
+        self.assertAlmostEqual(len(feishu_calls), 4, delta=1)
 
     @mock.patch("src.notification.get_config")
     @mock.patch("requests.post")
@@ -674,7 +675,8 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         ok = service.send("hello wechat")
 
         self.assertTrue(ok)
-        mock_post.assert_called_once()
+        wechat_calls = [call for call in mock_post.call_args_list if call.args and call.args[0] == "https://wechat.example"]
+        self.assertEqual(len(wechat_calls), 1)
 
     @mock.patch("src.notification.get_config")
     @mock.patch("requests.post")
@@ -689,7 +691,8 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         ok = service.send("A" * 6000)
 
         self.assertTrue(ok)
-        self.assertAlmostEqual(mock_post.call_count, 4, delta=1)
+        wechat_calls = [call for call in mock_post.call_args_list if call.args and call.args[0] == "https://wechat.example"]
+        self.assertAlmostEqual(len(wechat_calls), 4, delta=1)
 
 
 if __name__ == "__main__":
