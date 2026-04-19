@@ -5,8 +5,9 @@
 ## 新手先看
 
 1. `REPO_GUIDE.md`：先弄懂仓库结构
-2. `full-guide.md`：完整使用与部署说明
-3. `FAQ.md`：常见问题排查
+2. `PROJECT_SUMMARY.md`：先判断项目现在处在哪个阶段、维护重点是什么
+3. `full-guide.md`：完整使用与部署说明
+4. `FAQ.md`：常见问题排查
 
 ## 部署与运行
 

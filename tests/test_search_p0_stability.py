@@ -491,12 +491,14 @@ class TestFallbackStopCondition(unittest.TestCase):
         svc.mx_enabled = False
         svc.mx_search_primary_provider = "legacy"
 
+        recent_date = str(date.today() - timedelta(days=1))
+
         p1 = MagicMock(spec=BaseSearchProvider)
         p1.name = "First"
         p1.is_available = True
         p1.search.return_value = SearchResponse(
             query="test",
-            results=[_result("r1", "2026-04-14")],
+            results=[_result("r1", recent_date)],
             provider="First",
             success=True,
         )
@@ -506,7 +508,7 @@ class TestFallbackStopCondition(unittest.TestCase):
         p2.is_available = True
         p2.search.return_value = SearchResponse(
             query="test",
-            results=[_result("r2", "2026-04-14")],
+            results=[_result("r2", recent_date)],
             provider="Second",
             success=True,
         )
