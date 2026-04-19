@@ -65,6 +65,35 @@ def summarize_exception(exc: Exception) -> Tuple[str, str]:
     return error_type, " ".join(message.split())
 
 
+def is_transient_provider_error(fetcher_name: str, error_type: str, error_reason: str) -> bool:
+    """Return True for provider failures where retrying every symbol in the same run wastes time."""
+    name = (fetcher_name or "").strip()
+    reason = (error_reason or "").lower()
+    err_type = (error_type or "").lower()
+    if name == "EfinanceFetcher":
+        transient_keywords = (
+            "category=remote_disconnect",
+            "category=timeout",
+            "remotedisconnected",
+            "remote end closed connection",
+            "connection aborted",
+            "connection broken",
+            "protocolerror",
+            "read timed out",
+            "timed out",
+            "readtimeout",
+            "connecttimeout",
+        )
+        return any(keyword in reason for keyword in transient_keywords) or err_type in {
+            "timeout",
+            "readtimeout",
+            "connecttimeout",
+            "connectionerror",
+            "protocolerror",
+        }
+    return False
+
+
 def normalize_stock_code(stock_code: str) -> str:
     """
     Normalize stock code by stripping exchange prefixes/suffixes.
@@ -1049,6 +1078,9 @@ class DataFetcherManager:
                         if isinstance(e, RateLimitError):
                             self._block_fetcher_method_temporarily(fetcher.name, "get_daily_data", error_reason)
                             logger.info(f"[数据源短路] [{fetcher.name}] get_daily_data 已在本轮临时禁用")
+                        elif is_transient_provider_error(fetcher.name, error_type, error_reason):
+                            self._block_fetcher_method_temporarily(fetcher.name, "get_daily_data", error_reason)
+                            logger.info(f"[数据源短路] [{fetcher.name}] get_daily_data 已因瞬时网络错误在本轮临时禁用")
                     break
 
             error_summary = f"{market_label} {stock_code} 获取失败:\n" + "\n".join(errors)
@@ -1092,6 +1124,9 @@ class DataFetcherManager:
                 if isinstance(e, RateLimitError):
                     self._block_fetcher_method_temporarily(fetcher.name, "get_daily_data", error_reason)
                     logger.info(f"[数据源短路] [{fetcher.name}] get_daily_data 已在本轮临时禁用")
+                elif is_transient_provider_error(fetcher.name, error_type, error_reason):
+                    self._block_fetcher_method_temporarily(fetcher.name, "get_daily_data", error_reason)
+                    logger.info(f"[数据源短路] [{fetcher.name}] get_daily_data 已因瞬时网络错误在本轮临时禁用")
                 if attempt < total_fetchers:
                     next_fetcher = fetchers[attempt]
                     logger.info(f"[数据源切换] {stock_code}: [{fetcher.name}] -> [{next_fetcher.name}]")
