@@ -539,6 +539,14 @@ class DataFetcherManager:
             self._temporary_fetcher_method_blocks = {}
         if not hasattr(self, "_temporary_fetcher_method_blocks_lock") or self._temporary_fetcher_method_blocks_lock is None:
             self._temporary_fetcher_method_blocks_lock = RLock()
+        if not hasattr(self, "_fundamental_cache") or self._fundamental_cache is None:
+            self._fundamental_cache = {}
+        if not hasattr(self, "_fundamental_cache_lock") or self._fundamental_cache_lock is None:
+            self._fundamental_cache_lock = RLock()
+        if not hasattr(self, "_fundamental_timeout_worker_limit") or self._fundamental_timeout_worker_limit is None:
+            self._fundamental_timeout_worker_limit = 8
+        if not hasattr(self, "_fundamental_timeout_slots") or self._fundamental_timeout_slots is None:
+            self._fundamental_timeout_slots = BoundedSemaphore(self._fundamental_timeout_worker_limit)
 
     def _get_fetchers_snapshot(self) -> List[BaseFetcher]:
         self._ensure_concurrency_guards()
@@ -1805,32 +1813,72 @@ class DataFetcherManager:
         return []
 
     def get_market_stats(self) -> Dict[str, Any]:
-        """获取市场涨跌统计（自动切换数据源）"""
+        """获取市场涨跌统计（自动切换数据源，并对单数据源执行硬超时）。"""
+        from src.config import get_config
+
+        self._ensure_concurrency_guards()
+        config = get_config()
+        timeout_seconds = max(
+            0.0,
+            float(getattr(config, "market_stats_fetch_timeout_seconds", 5.0) or 0.0),
+        )
+        cache_ttl_seconds = max(
+            0,
+            int(getattr(config, "market_stats_cache_ttl_seconds", 120) or 0),
+        )
+        now_ts = time.time()
+        if cache_ttl_seconds > 0:
+            cache_item = getattr(self, "_market_stats_cache", None)
+            if cache_item:
+                age = now_ts - float(cache_item.get("ts", 0))
+                if age <= cache_ttl_seconds:
+                    cached = cache_item.get("data") or {}
+                    logger.info("[market_stats cache] 命中短 TTL 缓存: age=%.2fs ttl=%ss", age, cache_ttl_seconds)
+                    return cached
+
         tickflow_fetcher = self._get_tickflow_fetcher()
         if tickflow_fetcher is not None:
             try:
-                data = tickflow_fetcher.get_market_stats()
-                if data:
+                data, err, _ = self._run_with_timeout(
+                    lambda: tickflow_fetcher.get_market_stats(),
+                    timeout_seconds,
+                    "market_stats:TickFlowFetcher",
+                )
+                if err:
+                    logger.warning("[TickFlowFetcher] 获取市场统计失败: %s", err)
+                elif data:
+                    if cache_ttl_seconds > 0:
+                        self._market_stats_cache = {"ts": now_ts, "data": data}
                     logger.info("[TickFlowFetcher] 获取市场统计成功")
                     return data
             except Exception as e:
                 logger.warning(f"[TickFlowFetcher] 获取市场统计失败: {e}")
 
+        fetchers = self._get_fetchers_snapshot()
         non_tushare_fetchers = [
             fetcher
-            for fetcher in self._fetchers
+            for fetcher in fetchers
             if getattr(fetcher, "name", fetcher.__class__.__name__) != "TushareFetcher"
         ]
         tushare_fetchers = [
             fetcher
-            for fetcher in self._fetchers
+            for fetcher in fetchers
             if getattr(fetcher, "name", fetcher.__class__.__name__) == "TushareFetcher"
         ]
 
         for fetcher in non_tushare_fetchers + tushare_fetchers:
             try:
-                data = fetcher.get_market_stats()
+                data, err, _ = self._run_with_timeout(
+                    lambda f=fetcher: f.get_market_stats(),
+                    timeout_seconds,
+                    f"market_stats:{fetcher.name}",
+                )
+                if err:
+                    logger.warning("[%s] 获取市场统计失败: %s", fetcher.name, err)
+                    continue
                 if data:
+                    if cache_ttl_seconds > 0:
+                        self._market_stats_cache = {"ts": now_ts, "data": data}
                     logger.info(f"[{fetcher.name}] 获取市场统计成功")
                     return data
             except Exception as e:

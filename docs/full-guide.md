@@ -241,7 +241,8 @@ daily_stock_analysis/
 
 | 变量名 | 说明 | 默认值 | 必填 |
 |--------|------|--------|:----:|
-| `TUSHARE_TOKEN` | Tushare Pro Token | - | 可选 |
+| `TUSHARE_TOKEN` | Tushare Pro Token；官方模式填写官方 token，兼容代理模式填写代理分发的 key | - | 可选 |
+| `TUSHARE_API_URL` | 可选的 Tushare 兼容 HTTP 上游地址；留空时默认使用官方 `http://api.tushare.pro`，如需接入兼容代理则填写代理地址 | `http://api.tushare.pro`（留空时生效） | 可选 |
 | `TICKFLOW_API_KEY` | TickFlow API Key；配置后 A 股大盘复盘指数优先尝试 TickFlow，若套餐支持标的池查询则市场统计也会优先尝试 TickFlow | - | 可选 |
 | `ENABLE_REALTIME_QUOTE` | 启用实时行情（关闭后使用历史收盘价分析） | `true` | 可选 |
 | `ENABLE_REALTIME_TECHNICAL_INDICATORS` | 盘中实时技术面：启用时用实时价计算 MA5/MA10/MA20 与多头排列（Issue #234）；关闭则用昨日收盘 | `true` | 可选 |
@@ -259,6 +260,8 @@ daily_stock_analysis/
 > - A 股：按 `valuation/growth/earnings/institution/capital_flow/dragon_tiger/boards` 聚合能力返回；
 > - ETF：返回可得项，缺失能力标记为 `not_supported`，整体不影响原流程；
 > - 任何异常走 fail-open，仅记录错误，不影响技术面/新闻/筹码主链路。
+> - `TUSHARE_TOKEN` 与 `TUSHARE_API_URL` 组合支持双模式切换：只配 `TUSHARE_TOKEN` 时默认直连官方 `http://api.tushare.pro`；若填写 `TUSHARE_API_URL`，则切换到兼容 Tushare HTTP 协议的代理上游。未来切回官方只需清空 `TUSHARE_API_URL`，无需改代码。
+> - Tushare 主链当前走项目内置 HTTP client，不依赖官方 `tushare` SDK；实时行情接口失败时会直接返回 `None`，交由其他实时数据源继续兜底。
 > - 配置 `TICKFLOW_API_KEY` 后，仅 A 股大盘复盘会额外优先尝试 TickFlow 的主要指数行情；若当前套餐支持标的池查询，市场涨跌统计也会优先尝试 TickFlow。个股链路和实时行情优先级不变。
 > - TickFlow 能力按套餐权限分层：有限权限套餐仍可使用主指数查询；支持 `CN_Equity_A` 标的池查询的套餐才会启用 TickFlow 市场统计。
 > - 官方 quickstart 已文档化 `quotes.get(universes=["CN_Equity_A"])`，但线上 smoke test 进一步确认：`TICKFLOW_API_KEY` 不等于一定具备该权限，且 `quotes.get(symbols=[...])` 单次存在标的数量限制。

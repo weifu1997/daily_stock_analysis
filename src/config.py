@@ -437,6 +437,7 @@ class Config:
 
     # === 数据源 API Token ===
     tushare_token: Optional[str] = None
+    tushare_api_url: Optional[str] = None
     tickflow_api_key: Optional[str] = None
     longbridge_app_key: Optional[str] = None
     longbridge_app_secret: Optional[str] = None
@@ -683,6 +684,10 @@ class Config:
     market_review_enabled: bool = True        # 是否启用大盘复盘
     # 大盘复盘市场区域：cn(A股)、us(美股)、both(两者)，us 适合仅关注美股的用户
     market_review_region: str = "cn"
+    # 大盘复盘里“市场涨跌统计”单数据源超时（秒）；超时后继续 fallback，避免整轮被慢源拖住
+    market_stats_fetch_timeout_seconds: float = 5.0
+    # 大盘市场统计短 TTL 缓存（秒）；避免同轮/短时间重复拉取全市场快照
+    market_stats_cache_ttl_seconds: int = 120
     # 交易日检查：默认启用，非交易日跳过执行；设为 false 或 --force-run 可强制执行（Issue #373）
     trading_day_check_enabled: bool = True
 
@@ -1123,6 +1128,7 @@ class Config:
             feishu_app_secret=os.getenv('FEISHU_APP_SECRET'),
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
             tushare_token=os.getenv('TUSHARE_TOKEN'),
+            tushare_api_url=(os.getenv('TUSHARE_API_URL') or None),
             tickflow_api_key=os.getenv('TICKFLOW_API_KEY'),
             litellm_model=litellm_model,
             litellm_fallback_models=litellm_fallback_models,
@@ -1377,6 +1383,18 @@ class Config:
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',
             market_review_region=cls._parse_market_review_region(
                 os.getenv('MARKET_REVIEW_REGION', 'cn')
+            ),
+            market_stats_fetch_timeout_seconds=parse_env_float(
+                os.getenv('MARKET_STATS_FETCH_TIMEOUT_SECONDS'),
+                5.0,
+                field_name='MARKET_STATS_FETCH_TIMEOUT_SECONDS',
+                minimum=0.0,
+            ),
+            market_stats_cache_ttl_seconds=parse_env_int(
+                os.getenv('MARKET_STATS_CACHE_TTL_SECONDS'),
+                120,
+                field_name='MARKET_STATS_CACHE_TTL_SECONDS',
+                minimum=0,
             ),
             trading_day_check_enabled=os.getenv('TRADING_DAY_CHECK_ENABLED', 'true').lower() != 'false',
             webui_enabled=os.getenv('WEBUI_ENABLED', 'false').lower() == 'true',

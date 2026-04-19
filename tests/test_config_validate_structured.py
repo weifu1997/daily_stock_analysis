@@ -109,6 +109,29 @@ class TestValidateStructuredHappyPath:
         assert warnings == []
 
 
+class TestConfigFromEnvTushareApiUrl:
+    def test_load_from_env_reads_tushare_api_url(self):
+        env = {
+            "STOCK_LIST": "600519",
+            "WECHAT_WEBHOOK_URL": "https://example.com/webhook",
+            "LLM_CHANNELS": "primary",
+            "LLM_PRIMARY_PROTOCOL": "openai",
+            "LLM_PRIMARY_BASE_URL": "https://example.com/v1",
+            "LLM_PRIMARY_API_KEY": "sk-demo-key",
+            "LLM_PRIMARY_MODELS": "openai/gpt-4o-mini",
+            "LITELLM_MODEL": "openai/gpt-4o-mini",
+            "TUSHARE_TOKEN": "demo-token",
+            "TUSHARE_API_URL": "https://tushare.data.godscode.com.cn",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            Config.reset_instance()
+            config = Config._load_from_env()
+
+        assert config.tushare_token == "demo-token"
+        assert config.tushare_api_url == "https://tushare.data.godscode.com.cn"
+
+
 # ---------------------------------------------------------------------------
 # validate_structured() — stock list
 # ---------------------------------------------------------------------------

@@ -1650,13 +1650,11 @@ class AkshareFetcher(BaseFetcher):
         """
         获取市场涨跌统计
 
-        数据源优先级：
-        1. 东财接口 (ak.stock_zh_a_spot_em)
-        2. 新浪接口 (ak.stock_zh_a_spot)
+        当前生产策略：只尝试东财接口 (ak.stock_zh_a_spot_em)。
+        新浪二次兜底会再次触发全市场拉取，耗时收益比低，默认跳过。
         """
         import akshare as ak
 
-        # 优先东财接口
         try:
             self._set_random_user_agent()
             self._enforce_rate_limit()
@@ -1666,19 +1664,7 @@ class AkshareFetcher(BaseFetcher):
             if df is not None and not df.empty:
                 return self._calc_market_stats(df)
         except Exception as e:
-            logger.warning(f"[Akshare] 东财接口获取市场统计失败: {e}，尝试新浪接口")
-
-        # 东财失败后，尝试新浪接口
-        try:
-            self._set_random_user_agent()
-            self._enforce_rate_limit()
-
-            logger.info("[API调用] ak.stock_zh_a_spot() 获取市场统计(新浪)...")
-            df = ak.stock_zh_a_spot()
-            if df is not None and not df.empty:
-                return self._calc_market_stats(df)
-        except Exception as e:
-            logger.error(f"[Akshare] 新浪接口获取市场统计也失败: {e}")
+            logger.warning(f"[Akshare] 东财接口获取市场统计失败: {e}，跳过新浪二次兜底")
 
         return None
 

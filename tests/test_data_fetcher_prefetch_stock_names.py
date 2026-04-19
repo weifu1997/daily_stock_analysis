@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import unittest
+from datetime import datetime
 from unittest.mock import MagicMock, call, patch
 from types import SimpleNamespace
 
@@ -138,6 +139,76 @@ class TestPrefetchStockNames(unittest.TestCase):
         self.assertEqual(cached_source, "dummy")
         self.assertTrue(cached_df.equals(daily_df))
         self.assertIsNotNone(cached_target_date)
+
+    def test_fetch_and_save_stock_data_reuses_same_target_date_cache_and_skips_second_daily_pull(self):
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.fetcher_manager = MagicMock()
+        pipeline.db = MagicMock()
+        pipeline.fetcher_manager.get_stock_name.return_value = "贵州茅台"
+        pipeline.db.has_today_data.return_value = False
+
+        daily_df = pd.DataFrame(
+            [
+                {
+                    "date": "2026-03-27",
+                    "open": 1.0,
+                    "high": 1.0,
+                    "low": 1.0,
+                    "close": 1.0,
+                    "volume": 1,
+                    "amount": 1.0,
+                    "pct_chg": 0.0,
+                }
+            ]
+        )
+        pipeline.fetcher_manager.get_daily_data.return_value = (
+            daily_df,
+            "TushareFetcher",
+        )
+        pipeline.db.save_daily_data.return_value = 1
+        pipeline.fetcher_manager.get_chip_distribution.return_value = None
+        pipeline._build_portfolio_context_for_stock = MagicMock(return_value=None)
+        pipeline._emit_progress = MagicMock()
+        pipeline.config = SimpleNamespace(
+            enable_realtime_quote=False,
+            agent_mode=False,
+            agent_skills=[],
+            enable_intelligence=False,
+            max_news=3,
+            no_fundamentals=True,
+            fundamental_stage_timeout_seconds=1.5,
+        )
+        pipeline.fetcher_manager.build_failed_fundamental_context = MagicMock(return_value={})
+        pipeline.fetcher_manager.get_fundamental_context = MagicMock(return_value={"source_chain": [], "coverage": {}})
+        pipeline._attach_belong_boards_to_fundamental_context = MagicMock(side_effect=lambda code, ctx: ctx)
+        pipeline.db.save_fundamental_snapshot = MagicMock()
+        pipeline.db.get_latest_stock_data = MagicMock(return_value=daily_df.copy())
+        pipeline.db.get_latest_news = MagicMock(return_value=[])
+        pipeline.db.get_latest_analysis_context = MagicMock(return_value=None)
+        pipeline.search_service = None
+        pipeline._get_cached_portfolio_snapshot = MagicMock(return_value=None)
+        pipeline.analyzer = MagicMock()
+        pipeline.analyzer.analyze_stock.return_value = SimpleNamespace(success=True)
+        pipeline.notification_service = None
+
+        frozen_time = datetime(2026, 3, 27, 10, 0)
+        success, error = StockAnalysisPipeline.fetch_and_save_stock_data(
+            pipeline,
+            "600519",
+            current_time=frozen_time,
+        )
+        self.assertTrue(success)
+        self.assertIsNone(error)
+
+        StockAnalysisPipeline.analyze_stock(
+            pipeline,
+            "600519",
+            report_type=MagicMock(),
+            query_id="qid-1",
+            current_time=frozen_time,
+        )
+
+        pipeline.fetcher_manager.get_daily_data.assert_called_once_with("600519", days=120)
 
     def test_fetch_and_save_stock_data_skips_tushare_adj_backfill_when_primary_source_not_tushare(self):
         pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)

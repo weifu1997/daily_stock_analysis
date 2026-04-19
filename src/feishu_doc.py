@@ -32,7 +32,34 @@ class FeishuDocManager:
 
     def is_configured(self) -> bool:
         """检查配置是否完整"""
-        return bool(self.app_id and self.app_secret and self.folder_token)
+        return bool(self.app_id and self.app_secret)
+
+    @staticmethod
+    def _is_folder_permission_error(response) -> bool:
+        """判断是否为目标文件夹无写入权限，可安全回退为默认位置直建。"""
+        return getattr(response, "code", None) == 1770040
+
+    def _build_create_request(self, title: str, *, use_folder: bool = True):
+        body_builder = CreateDocumentRequestBody.builder().title(title)
+        if use_folder and self.folder_token:
+            body_builder.folder_token(self.folder_token)
+        return CreateDocumentRequest.builder().request_body(body_builder.build()).build()
+
+    def _create_document_with_fallback(self, title: str):
+        """优先在配置文件夹创建；若文件夹无权限，则回退为默认位置直建。"""
+        create_request = self._build_create_request(title, use_folder=True)
+        response = self.client.docx.v1.document.create(create_request)
+
+        if response.success() or not self.folder_token or not self._is_folder_permission_error(response):
+            return response
+
+        logger.warning(
+            "飞书目标文件夹无创建权限，回退为默认位置直建: code=%s msg=%s",
+            getattr(response, "code", None),
+            getattr(response, "msg", None),
+        )
+        fallback_request = self._build_create_request(title, use_folder=False)
+        return self.client.docx.v1.document.create(fallback_request)
 
     def create_daily_doc(self, title: str, content_md: str) -> Optional[str]:
         """
@@ -44,15 +71,7 @@ class FeishuDocManager:
 
         try:
             # 1. 创建文档
-            # 使用官方 SDK 的 Builder 模式构造请求
-            create_request = CreateDocumentRequest.builder() \
-                .request_body(CreateDocumentRequestBody.builder()
-                              .folder_token(self.folder_token)
-                              .title(title)
-                              .build()) \
-                .build()
-
-            response = self.client.docx.v1.document.create(create_request)
+            response = self._create_document_with_fallback(title)
 
             if not response.success():
                 logger.error(f"创建文档失败: {response.code} - {response.msg} - {response.error}")

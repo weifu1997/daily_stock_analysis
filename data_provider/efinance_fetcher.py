@@ -43,13 +43,13 @@ from tenacity import (
 # Timeout (seconds) for efinance library calls that go through eastmoney APIs
 # with no built-in timeout.  Prevents indefinite hangs when hosts are unreachable.
 try:
-    _EF_CALL_TIMEOUT = int(os.environ.get("EFINANCE_CALL_TIMEOUT", "30"))
+    _EF_CALL_TIMEOUT = int(os.environ.get("EFINANCE_CALL_TIMEOUT", "15"))
 except (ValueError, TypeError):
     import logging as _logging
     _logging.getLogger(__name__).warning(
-        "EFINANCE_CALL_TIMEOUT is not a valid integer, using default 30s"
+        "EFINANCE_CALL_TIMEOUT is not a valid integer, using default 15s"
     )
-    _EF_CALL_TIMEOUT = 30
+    _EF_CALL_TIMEOUT = 15
 
 from patch.eastmoney_patch import eastmoney_patch
 from src.config import get_config
@@ -902,7 +902,7 @@ class EfinanceFetcher(BaseFetcher):
 
             return self._calc_market_stats(df)
         except Exception as e:
-            logger.error(f"[efinance] 获取市场统计失败: {e}")
+            logger.warning(f"[efinance] 获取市场统计失败: {e}")
             return None
         
     def _calc_market_stats(

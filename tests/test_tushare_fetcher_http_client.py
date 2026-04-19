@@ -61,12 +61,50 @@ class TestTushareHttpClient(unittest.TestCase):
         )
         self.assertEqual(df.to_dict(orient="records"), [{"ts_code": "600519.SH", "close": 1688.0}])
 
+    def test_query_posts_to_configured_proxy_endpoint(self) -> None:
+        client = _TushareHttpClient(
+            token="demo-token",
+            timeout=15,
+            api_url="https://tushare.data.godscode.com.cn",
+        )
+        response = MagicMock(
+            status_code=200,
+            text=json.dumps(
+                {
+                    "code": 0,
+                    "data": {
+                        "fields": ["ts_code", "close"],
+                        "items": [["000001.SZ", 12.34]],
+                    },
+                }
+            ),
+        )
+
+        with patch("data_provider.tushare_fetcher.requests.post", return_value=response) as post_mock:
+            df = client.daily(ts_code="000001.SZ", start_date="20260320", end_date="20260325")
+
+        post_mock.assert_called_once_with(
+            "https://tushare.data.godscode.com.cn",
+            json={
+                "api_name": "daily",
+                "token": "demo-token",
+                "params": {
+                    "ts_code": "000001.SZ",
+                    "start_date": "20260320",
+                    "end_date": "20260325",
+                },
+                "fields": "",
+            },
+            timeout=15,
+        )
+        self.assertEqual(df.to_dict(orient="records"), [{"ts_code": "000001.SZ", "close": 12.34}])
+
 
 class TestTushareFetcherInit(unittest.TestCase):
     """Ensure fetcher initialization no longer depends on the tushare SDK package."""
 
     def test_init_builds_http_client_when_token_present(self) -> None:
-        config = SimpleNamespace(tushare_token="demo-token")
+        config = SimpleNamespace(tushare_token="demo-token", tushare_api_url=None)
 
         with patch("data_provider.tushare_fetcher.get_config", return_value=config):
             fetcher = TushareFetcher()
@@ -74,6 +112,18 @@ class TestTushareFetcherInit(unittest.TestCase):
         self.assertIsInstance(fetcher._api, _TushareHttpClient)
         self.assertTrue(fetcher.is_available())
         self.assertEqual(fetcher.priority, -1)
+
+    def test_init_uses_configured_proxy_url_when_present(self) -> None:
+        config = SimpleNamespace(
+            tushare_token="demo-token",
+            tushare_api_url="https://tushare.data.godscode.com.cn",
+        )
+
+        with patch("data_provider.tushare_fetcher.get_config", return_value=config):
+            fetcher = TushareFetcher()
+
+        self.assertIsInstance(fetcher._api, _TushareHttpClient)
+        self.assertEqual(fetcher._api._api_url, "https://tushare.data.godscode.com.cn")
 
     def test_http_client_marks_pro_bar_as_unsupported(self) -> None:
         client = _TushareHttpClient(token="demo-token")

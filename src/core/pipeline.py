@@ -42,6 +42,7 @@ from src.services.mx_name_cache import get_cached_stock_name
 from src.services.portfolio_service import PortfolioService
 from src.analysis.context_models import PortfolioContext
 from src.analysis.normalization import AnalysisNormalizationContext, normalize_analysis_result
+from src.analysis.technical_factor_summary import summarize_stk_factor_snapshot
 from src.integrations.mx.client import MxClient
 from src.integrations.mx.search_adapter import MxSearchAdapter
 from src.enums import ReportType
@@ -589,6 +590,11 @@ class StockAnalysisPipeline:
                     'yesterday': {}
                 }
             
+            technical_factor_summary = self._build_technical_factor_summary_for_analysis(
+                stock_code=code,
+                daily_data=daily_df,
+            )
+
             # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、股票名称、复权快照）
             enhanced_context = self._enhance_context(
                 context, 
@@ -599,6 +605,8 @@ class StockAnalysisPipeline:
                 fundamental_context,
                 portfolio_context,
             )
+            if technical_factor_summary is not None:
+                enhanced_context['technical_factor_summary'] = technical_factor_summary
             
             # Step 7: 调用 AI 分析（传入增强的上下文和新闻）
             llm_progress_state = {"last_progress": 64}
@@ -682,6 +690,64 @@ class StockAnalysisPipeline:
             logger.exception(f"{stock_name}({code}) 详细错误信息:")
             return None
     
+    def _build_technical_factor_summary_for_analysis(
+        self,
+        stock_code: str,
+        daily_data: Optional[pd.DataFrame] = None,
+        target_date: Optional[date] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """基于 stk_factor_pro 构建单股分析用的技术状态摘要。"""
+        try:
+            if daily_data is None or daily_data.empty:
+                return None
+
+            latest_row = daily_data.iloc[-1]
+            close_price = None
+            if "close" in latest_row:
+                try:
+                    close_price = float(latest_row["close"])
+                except (TypeError, ValueError):
+                    close_price = None
+
+            trade_date_str = None
+            if "trade_date" in latest_row:
+                raw_trade_date = str(latest_row["trade_date"]).strip()
+                trade_date_str = raw_trade_date.replace("-", "")
+            elif "date" in latest_row:
+                raw_trade_date = str(latest_row["date"]).strip()
+                trade_date_str = raw_trade_date.replace("-", "")[:8]
+
+            if target_date is not None and not trade_date_str:
+                trade_date_str = target_date.strftime("%Y%m%d")
+
+            if not trade_date_str:
+                return None
+
+            tushare_fetcher = self.fetcher_manager.get_fetcher("TushareFetcher")
+            if tushare_fetcher is None or not tushare_fetcher.is_available():
+                return None
+
+            factor_df = tushare_fetcher.get_stock_factor_snapshot(
+                stock_code=stock_code,
+                start_date=trade_date_str,
+                end_date=trade_date_str,
+            )
+            if factor_df is None or factor_df.empty:
+                return None
+
+            factor_snapshot = factor_df.iloc[-1].to_dict()
+            return summarize_stk_factor_snapshot(
+                snapshot=factor_snapshot,
+                close_price=close_price,
+            )
+        except Exception as e:
+            logger.warning(
+                "[%s] 构建 technical_factor_summary 失败（fail-open）: %s",
+                stock_code,
+                e,
+            )
+            return None
+
     def _enhance_context(
         self,
         context: Dict[str, Any],

@@ -771,8 +771,10 @@ def run_full_analysis(
                 if doc_url:
                     logger.info(f"飞书云文档创建成功: {doc_url}")
                     report.set_artifact("feishu_doc_url", doc_url)
-                    # 可选：将文档链接也推送到群里
-                    pipeline.notifier.send(f"[{now.strftime('%Y-%m-%d %H:%M')}] 复盘文档创建成功: {doc_url}")
+                    # 仅向飞书发送文档链接，避免触发邮件渠道
+                    pipeline.notifier.send_to_feishu(
+                        f"[{now.strftime('%Y-%m-%d %H:%M')}] 复盘文档创建成功: {doc_url}"
+                    )
 
         except Exception as e:
             logger.error(f"飞书文档生成失败: {e}")

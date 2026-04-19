@@ -167,6 +167,21 @@ class TestDataFetcherRateLimitShortCircuit(unittest.TestCase):
         self.assertEqual(yfinance.calls, 1)
         self.assertEqual(longbridge.calls, 2)
 
+    def test_manager_skips_all_symbols_after_tushare_daily_rate_limit_in_same_run(self):
+        tushare = _QuotaFailingFetcher()
+        efinance = _SuccessFetcher()
+        manager = DataFetcherManager(fetchers=[tushare, efinance])
+
+        df1, source1 = manager.get_daily_data("600519", days=5)
+        df2, source2 = manager.get_daily_data("000001", days=5)
+
+        self.assertFalse(df1.empty)
+        self.assertFalse(df2.empty)
+        self.assertEqual(source1, "EfinanceFetcher")
+        self.assertEqual(source2, "EfinanceFetcher")
+        self.assertEqual(tushare.calls, 1)
+        self.assertEqual(efinance.calls, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
