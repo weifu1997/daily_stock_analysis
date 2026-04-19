@@ -230,6 +230,15 @@ def _derive_chip_health(profit_ratio: float, concentration_90: float, language: 
     return localize_chip_health("一般", language)
 
 
+def _classify_chip_source(source: Any) -> tuple[str, bool, str]:
+    normalized = str(source or "").strip().lower()
+    if not normalized or normalized in {"estimated", "estimated_ohlcv", "fallback", "unknown"}:
+        return "estimated", True, "fallback_estimated"
+    if normalized.startswith("estimated"):
+        return "estimated", True, "fallback_estimated"
+    return "real", False, "real_chip"
+
+
 def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dict[str, Any]:
     """Build chip_structure dict from ChipDistribution or dict."""
     if hasattr(chip_data, "profit_ratio"):
@@ -265,6 +274,8 @@ def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dic
         confidence_out = f"{confidence:.0%}"
 
     chip_health = _derive_chip_health(pr, c90, language=language)
+    source_value = source or "estimated"
+    source_category, is_estimated, data_reliability = _classify_chip_source(source_value)
     return {
         "profit_ratio": f"{pr:.1%}",
         "profit_ratio_raw": pr,
@@ -273,7 +284,10 @@ def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dic
         "concentration": f"{c90:.2%}",
         "concentration_raw": c90,
         "chip_health": chip_health,
-        "source": source or "estimated",
+        "source": source_value,
+        "source_category": source_category,
+        "is_estimated": is_estimated,
+        "data_reliability": data_reliability,
         "confidence": confidence_out,
         "confidence_raw": confidence,
         "method": method or "truncated_gaussian",
@@ -467,7 +481,15 @@ def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> N
         for k in _CHIP_KEYS:
             if _is_value_placeholder(merged.get(k)) and not _is_value_placeholder(filled.get(k)):
                 merged[k] = filled[k]
-        for raw_key in ("profit_ratio_raw", "avg_cost_raw", "concentration_raw", "confidence_raw"):
+        for raw_key in (
+            "profit_ratio_raw",
+            "avg_cost_raw",
+            "concentration_raw",
+            "confidence_raw",
+            "source_category",
+            "is_estimated",
+            "data_reliability",
+        ):
             if raw_key not in merged and raw_key in filled:
                 merged[raw_key] = filled[raw_key]
         if merged.get("source") in (

@@ -829,6 +829,9 @@ class StockAnalysisPipeline:
                     'concentration': chip_data.concentration_90,
                     'chip_health': chip_status,
                     'source': getattr(chip_data, 'source', 'estimated_ohlcv'),
+                    'source_category': 'estimated' if str(getattr(chip_data, 'source', 'estimated_ohlcv')).startswith('estimated') else 'real',
+                    'is_estimated': str(getattr(chip_data, 'source', 'estimated_ohlcv')).startswith('estimated'),
+                    'data_reliability': 'fallback_estimated' if str(getattr(chip_data, 'source', 'estimated_ohlcv')).startswith('estimated') else 'real_chip',
                     'confidence': getattr(chip_data, 'confidence', None),
                     'method': getattr(chip_data, 'method', 'truncated_gaussian'),
                 }

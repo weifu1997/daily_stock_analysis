@@ -1505,6 +1505,12 @@ class DataFetcherManager:
                 _record_chip_event(fetcher_name, "circuit_breaker", "unavailable")
                 continue
 
+            blocked_reason = self._is_fetcher_method_temporarily_blocked(fetcher_name, "get_chip_distribution")
+            if blocked_reason:
+                logger.info(f"[数据源短路] [{fetcher_name}] {stock_code} get_chip_distribution 已临时禁用: {blocked_reason}")
+                _record_chip_event(fetcher_name, "temporarily_blocked", blocked_reason)
+                continue
+
             fetcher = next(
                 (f for f in self._get_fetchers_snapshot() if getattr(f, 'name', '') in fetcher_names),
                 None,
@@ -1520,17 +1526,22 @@ class DataFetcherManager:
                 chip = self._call_fetcher_method(fetcher, 'get_chip_distribution', stock_code)
                 if chip is not None:
                     circuit_breaker.record_success(source_key)
-                    _record_chip_event(fetcher_name, "success", "")
+                    _record_chip_event(fetcher_name, "success", f"source={getattr(chip, 'source', fetcher_name)}")
                     logger.info(f"[筹码分布] {stock_code} 成功获取 (来源: {fetcher_name})")
                     return chip
                 circuit_breaker.record_inconclusive(source_key)
                 _record_chip_event(fetcher_name, "empty", "returned_none_or_empty")
             except Exception as e:
                 err = str(e)
+                lowered = err.lower()
                 if fetcher_name == "TushareFetcher":
                     reason = "permission_or_api_error"
                 elif fetcher_name == "AkshareFetcher":
-                    reason = "network_or_remote_disconnect"
+                    if any(keyword in lowered for keyword in ("remotedisconnected", "connection aborted", "connection without response", "protocolerror", "timed out", "timeout")):
+                        reason = "network_or_remote_disconnect"
+                        self._block_fetcher_method_temporarily(fetcher_name, "get_chip_distribution", reason)
+                    else:
+                        reason = "akshare_chip_error"
                 circuit_breaker.record_failure(source_key, err)
                 _record_chip_event(fetcher_name, "failed", f"{reason}: {err}")
                 continue
