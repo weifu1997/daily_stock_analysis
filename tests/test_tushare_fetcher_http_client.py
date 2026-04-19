@@ -104,12 +104,13 @@ class TestTushareFetcherInit(unittest.TestCase):
     """Ensure fetcher initialization no longer depends on the tushare SDK package."""
 
     def test_init_builds_http_client_when_token_present(self) -> None:
-        config = SimpleNamespace(tushare_token="demo-token", tushare_api_url=None)
+        config = SimpleNamespace(tushare_token="demo-token", tushare_api_url=None, tushare_http_timeout=12)
 
         with patch("data_provider.tushare_fetcher.get_config", return_value=config):
             fetcher = TushareFetcher()
 
         self.assertIsInstance(fetcher._api, _TushareHttpClient)
+        self.assertEqual(fetcher._api._timeout, 12)
         self.assertTrue(fetcher.is_available())
         self.assertEqual(fetcher.priority, -1)
 
@@ -117,6 +118,7 @@ class TestTushareFetcherInit(unittest.TestCase):
         config = SimpleNamespace(
             tushare_token="demo-token",
             tushare_api_url="https://tushare.data.godscode.com.cn",
+            tushare_http_timeout=9,
         )
 
         with patch("data_provider.tushare_fetcher.get_config", return_value=config):
@@ -124,6 +126,7 @@ class TestTushareFetcherInit(unittest.TestCase):
 
         self.assertIsInstance(fetcher._api, _TushareHttpClient)
         self.assertEqual(fetcher._api._api_url, "https://tushare.data.godscode.com.cn")
+        self.assertEqual(fetcher._api._timeout, 9)
 
     def test_http_client_marks_pro_bar_as_unsupported(self) -> None:
         client = _TushareHttpClient(token="demo-token")

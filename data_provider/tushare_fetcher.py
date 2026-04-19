@@ -193,7 +193,8 @@ class TushareFetcher(BaseFetcher):
         """
         config = get_config()
         api_url = (getattr(config, "tushare_api_url", None) or "http://api.tushare.pro").strip()
-        client = _TushareHttpClient(token=token, api_url=api_url)
+        timeout = int(getattr(config, "tushare_http_timeout", 30) or 30)
+        client = _TushareHttpClient(token=token, timeout=timeout, api_url=api_url)
         logger.debug("Tushare API client configured for direct HTTP calls")
         return client
 
@@ -269,7 +270,14 @@ class TushareFetcher(BaseFetcher):
         self._call_count += 1
         logger.debug(f"Tushare 当前分钟调用次数: {self._call_count}/{self.rate_limit_per_minute}")
 
+    def _ensure_temporary_quota_blocks(self) -> None:
+        if not hasattr(self, "_temporary_quota_blocks") or self._temporary_quota_blocks is None:
+            self._temporary_quota_blocks = {}
+        if not hasattr(self, "_temporary_quota_block_seconds") or self._temporary_quota_block_seconds is None:
+            self._temporary_quota_block_seconds = 600.0
+
     def _raise_if_method_temporarily_blocked(self, method_name: str) -> None:
+        self._ensure_temporary_quota_blocks()
         block = self._temporary_quota_blocks.get(method_name)
         if not block:
             return
@@ -280,6 +288,7 @@ class TushareFetcher(BaseFetcher):
         raise RateLimitError(f"Tushare method {method_name} is under temporary quota block: {reason}")
 
     def _record_temporary_quota_block(self, method_name: str, reason: str) -> None:
+        self._ensure_temporary_quota_blocks()
         if method_name:
             self._temporary_quota_blocks[method_name] = (
                 reason,
@@ -302,6 +311,37 @@ class TushareFetcher(BaseFetcher):
                 self._record_temporary_quota_block(method_name, str(exc))
                 raise RateLimitError(f"Tushare 配额超限: {exc}") from exc
             raise
+
+    @staticmethod
+    def _classify_tushare_api_error(exc: Exception) -> Tuple[str, str]:
+        """Classify Tushare/compatible-proxy failures for stable logging and fail-fast policy."""
+        message = str(exc).strip()
+        lowered = message.lower()
+        if isinstance(exc, requests.exceptions.Timeout) or any(
+            keyword in lowered
+            for keyword in ("timeout", "timed out", "read timed out", "connecttimeout", "readtimeout")
+        ):
+            return "timeout", message
+        if isinstance(exc, requests.exceptions.ConnectionError) or any(
+            keyword in lowered
+            for keyword in (
+                "connection aborted",
+                "remote end closed connection",
+                "remotedisconnected",
+                "connection refused",
+                "name or service not known",
+                "dns",
+                "proxy",
+            )
+        ):
+            return "proxy_or_network", message
+        if "http " in lowered or "status" in lowered:
+            return "http_error", message
+        return "api_error", message
+
+    @staticmethod
+    def _should_temporarily_block_tushare_method(category: str) -> bool:
+        return category in {"timeout", "proxy_or_network"}
 
     def _get_china_now(self) -> datetime:
         """返回上海时区当前时间，方便测试覆盖跨日刷新逻辑。"""
@@ -661,6 +701,7 @@ class TushareFetcher(BaseFetcher):
         request_fields = (fields or DEFAULT_STK_FACTOR_PRO_FIELDS).strip()
 
         try:
+            self._raise_if_method_temporarily_blocked("stk_factor_pro")
             df = self._call_api_with_rate_limit(
                 "stk_factor_pro",
                 ts_code=ts_code,
@@ -671,12 +712,16 @@ class TushareFetcher(BaseFetcher):
         except RateLimitError:
             raise
         except Exception as e:
+            category, detail = self._classify_tushare_api_error(e)
+            if self._should_temporarily_block_tushare_method(category):
+                self._record_temporary_quota_block("stk_factor_pro", f"{category}: {detail}")
             logger.warning(
-                "[Tushare] 获取 stk_factor_pro 失败 %s (%s ~ %s): %s",
+                "[Tushare] 获取 stk_factor_pro 失败 %s (%s ~ %s): category=%s detail=%s",
                 stock_code,
                 ts_start,
                 ts_end,
-                e,
+                category,
+                detail,
             )
             return None
 

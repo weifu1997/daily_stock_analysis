@@ -1,4 +1,5 @@
 import pandas as pd
+import requests
 from unittest.mock import MagicMock
 
 from data_provider.base import RateLimitError
@@ -136,6 +137,7 @@ class TestTushareFetcherStkFactorPro:
         fetcher._convert_stock_code = MagicMock(return_value="000001.SZ")
         fetcher._normalize_tushare_date = MagicMock(side_effect=lambda x: x)
         fetcher._call_api_with_rate_limit = MagicMock(side_effect=Exception("boom"))
+        fetcher._temporary_quota_blocks = {}
 
         result = fetcher.get_stock_factor_snapshot(
             stock_code="000001",
@@ -144,6 +146,7 @@ class TestTushareFetcherStkFactorPro:
         )
 
         assert result is None
+        assert "stk_factor_pro" not in fetcher._temporary_quota_blocks
 
     def test_get_stock_factor_snapshot_reraises_rate_limit_error(self):
         fetcher = TushareFetcher.__new__(TushareFetcher)
@@ -161,3 +164,45 @@ class TestTushareFetcherStkFactorPro:
             assert False, "expected RateLimitError"
         except RateLimitError:
             assert True
+
+    def test_get_stock_factor_snapshot_records_temporary_block_on_timeout(self):
+        fetcher = TushareFetcher.__new__(TushareFetcher)
+        fetcher._api = MagicMock()
+        fetcher._convert_stock_code = MagicMock(return_value="000001.SZ")
+        fetcher._normalize_tushare_date = MagicMock(side_effect=lambda x: x)
+        fetcher._call_api_with_rate_limit = MagicMock(
+            side_effect=requests.exceptions.ReadTimeout("read timed out")
+        )
+        fetcher._temporary_quota_blocks = {}
+        fetcher._temporary_quota_block_seconds = 600.0
+
+        result = fetcher.get_stock_factor_snapshot(
+            stock_code="000001",
+            start_date="20260417",
+            end_date="20260417",
+        )
+
+        assert result is None
+        assert "stk_factor_pro" in fetcher._temporary_quota_blocks
+        reason, blocked_until = fetcher._temporary_quota_blocks["stk_factor_pro"]
+        assert "timeout" in reason.lower()
+        assert blocked_until > 0
+
+    def test_get_stock_factor_snapshot_short_circuits_when_temporarily_blocked(self):
+        fetcher = TushareFetcher.__new__(TushareFetcher)
+        fetcher._api = MagicMock()
+        fetcher._convert_stock_code = MagicMock(return_value="000001.SZ")
+        fetcher._normalize_tushare_date = MagicMock(side_effect=lambda x: x)
+        fetcher._call_api_with_rate_limit = MagicMock(side_effect=AssertionError("should not call api"))
+        fetcher._temporary_quota_blocks = {"stk_factor_pro": ("previous timeout", 10**12)}
+
+        try:
+            fetcher.get_stock_factor_snapshot(
+                stock_code="000001",
+                start_date="20260417",
+                end_date="20260417",
+            )
+            assert False, "expected RateLimitError"
+        except RateLimitError as exc:
+            assert "temporary quota block" in str(exc).lower()
+        fetcher._call_api_with_rate_limit.assert_not_called()

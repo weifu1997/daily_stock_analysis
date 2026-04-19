@@ -438,6 +438,7 @@ class Config:
     # === 数据源 API Token ===
     tushare_token: Optional[str] = None
     tushare_api_url: Optional[str] = None
+    tushare_http_timeout: int = 30
     tickflow_api_key: Optional[str] = None
     longbridge_app_key: Optional[str] = None
     longbridge_app_secret: Optional[str] = None
@@ -1129,6 +1130,13 @@ class Config:
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
             tushare_token=os.getenv('TUSHARE_TOKEN'),
             tushare_api_url=(os.getenv('TUSHARE_API_URL') or None),
+            tushare_http_timeout=parse_env_int(
+                os.getenv('TUSHARE_HTTP_TIMEOUT'),
+                30,
+                field_name='TUSHARE_HTTP_TIMEOUT',
+                minimum=1,
+                maximum=120,
+            ),
             tickflow_api_key=os.getenv('TICKFLOW_API_KEY'),
             litellm_model=litellm_model,
             litellm_fallback_models=litellm_fallback_models,
