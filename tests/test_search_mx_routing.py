@@ -575,6 +575,53 @@ class TestMxSearchRouting(unittest.TestCase):
         self.assertEqual([item.title for item in intel["latest_news"].results], ["Brave-result"])
         serpapi.search.assert_not_called()
 
+    @patch("src.search_service.get_config")
+    def test_comprehensive_intel_continues_fallback_when_provider_filters_to_empty(self, mock_get_config):
+        mock_get_config.return_value = self._make_config(mx_enabled=False)
+        calls = []
+        old_date = "2020-01-01"
+        fresh_date = datetime.now().date().isoformat()
+
+        def make_provider(name, published_date):
+            def _search(*_args, **_kwargs):
+                calls.append(name)
+                return SearchResponse(
+                    query="贵州茅台 600519 最新 新闻 重大 事件",
+                    results=[
+                        SearchResult(
+                            title=f"{name}-result",
+                            snippet="snippet",
+                            url=f"https://example.com/{name}",
+                            source=name,
+                            published_date=published_date,
+                        )
+                    ],
+                    provider=name,
+                    success=True,
+                )
+            return SimpleNamespace(is_available=True, name=name, search=MagicMock(side_effect=_search))
+
+        stale_provider = make_provider("SearXNG", old_date)
+        fresh_provider = make_provider("Tavily", fresh_date)
+        unused_provider = make_provider("SerpAPI", fresh_date)
+
+        with patch("src.search_service.MxClient"):
+            service = SearchService(
+                tavily_keys=["dummy"],
+                serpapi_keys=["dummy"],
+                searxng_public_instances_enabled=False,
+                news_max_age_days=3,
+                news_strategy_profile="short",
+            )
+            service._providers = [stale_provider, fresh_provider, unused_provider]
+
+        with patch("src.search_service.time.sleep"):
+            intel = service.search_comprehensive_intel("600519", "贵州茅台", max_searches=1)
+
+        self.assertEqual(calls, ["SearXNG", "Tavily"])
+        self.assertEqual([item.title for item in intel["latest_news"].results], ["Tavily-result"])
+        unused_provider.search.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

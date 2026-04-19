@@ -3350,6 +3350,7 @@ class SearchService:
             return filtered_response
 
         fallback_response = None
+        fallback_filtered_response = None
         for provider in fallback_providers:
             logger.info(f"[情报搜索] {dimension_desc}: 使用 {provider.name}")
             response = self._provider_search_response(
@@ -3359,30 +3360,31 @@ class SearchService:
                 days=search_days,
                 tavily_topic=tavily_topic,
             )
+            filtered_response = self._dimension_response(
+                response,
+                strict_freshness=dimension['strict_freshness'],
+                search_days=search_days,
+                max_results=target_per_dimension,
+                log_scope=f"{stock_code}:{response.provider}:{dimension_name}",
+            )
             fallback_response = response
-            if response.success and response.results:
+            fallback_filtered_response = filtered_response
+            if filtered_response.results:
                 break
 
-        if fallback_response is None:
+        if fallback_response is None or fallback_filtered_response is None:
             return None
 
-        filtered_response = self._dimension_response(
-            fallback_response,
-            strict_freshness=dimension['strict_freshness'],
-            search_days=search_days,
-            max_results=target_per_dimension,
-            log_scope=f"{stock_code}:{fallback_response.provider}:{dimension_name}",
-        )
         if fallback_response.success:
             logger.info(
                 "[情报搜索] %s: 原始=%s条, 过滤后=%s条",
                 dimension_desc,
                 len(fallback_response.results),
-                len(filtered_response.results),
+                len(fallback_filtered_response.results),
             )
         else:
             logger.warning(f"[情报搜索] {dimension_desc}: 搜索失败 - {fallback_response.error_message}")
-        return filtered_response
+        return fallback_filtered_response
 
     def search_stock_news(
         self,
