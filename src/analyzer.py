@@ -492,7 +492,9 @@ def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> N
         ):
             if raw_key not in merged and raw_key in filled:
                 merged[raw_key] = filled[raw_key]
-        if merged.get("source") in (
+        current_source = merged.get("source")
+        current_source_category, current_is_estimated, _ = _classify_chip_source(current_source)
+        if current_source in (
             None,
             "",
             "N/A",
@@ -503,9 +505,13 @@ def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> N
             "真实",
             "real",
             "真实/estimated_ohlcv",
+            "tushare_cyq_perf/tushare_cyq_chips",
             "tushare_cyq_perf/tushare_cyq_chips/akshare/estimated_ohlcv",
-        ):
+        ) or (current_is_estimated and filled.get("source_category") == "real"):
             merged["source"] = filled.get("source", "estimated")
+            merged["source_category"] = filled.get("source_category", current_source_category)
+            merged["is_estimated"] = filled.get("is_estimated", current_is_estimated)
+            merged["data_reliability"] = filled.get("data_reliability")
         if _is_value_placeholder(merged.get("method")):
             merged["method"] = filled.get("method", "truncated_gaussian")
         if _is_value_placeholder(merged.get("confidence")):

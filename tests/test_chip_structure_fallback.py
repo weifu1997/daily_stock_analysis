@@ -299,3 +299,46 @@ class TestFillChipStructureIfNeeded(unittest.TestCase):
 
         cs = result.dashboard["data_perspective"]["chip_structure"]
         self.assertEqual(cs["source"], "tushare_cyq_perf")
+
+    def test_generic_tushare_alternative_source_is_replaced_with_precise_source(self) -> None:
+        result = self._make_result(
+            dashboard={
+                "data_perspective": {
+                    "chip_structure": {
+                        "source": "tushare_cyq_perf/tushare_cyq_chips",
+                    }
+                }
+            }
+        )
+        chip = ChipDistribution(code="600519", source="tushare_cyq_perf", profit_ratio=0.67)
+
+        fill_chip_structure_if_needed(result, chip)
+
+        cs = result.dashboard["data_perspective"]["chip_structure"]
+        self.assertEqual(cs["source"], "tushare_cyq_perf")
+        self.assertEqual(cs["source_category"], "real")
+        self.assertFalse(cs["is_estimated"])
+        self.assertEqual(cs["data_reliability"], "real_chip")
+
+    def test_llm_estimated_source_is_overridden_when_real_chip_data_exists(self) -> None:
+        result = self._make_result(
+            dashboard={
+                "data_perspective": {
+                    "chip_structure": {
+                        "source": "estimated_ohlcv",
+                        "source_category": "estimated",
+                        "is_estimated": True,
+                        "data_reliability": "fallback_estimated",
+                    }
+                }
+            }
+        )
+        chip = ChipDistribution(code="600519", source="tushare_cyq_perf", profit_ratio=0.67)
+
+        fill_chip_structure_if_needed(result, chip)
+
+        cs = result.dashboard["data_perspective"]["chip_structure"]
+        self.assertEqual(cs["source"], "tushare_cyq_perf")
+        self.assertEqual(cs["source_category"], "real")
+        self.assertFalse(cs["is_estimated"])
+        self.assertEqual(cs["data_reliability"], "real_chip")
