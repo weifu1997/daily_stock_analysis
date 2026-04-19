@@ -1833,6 +1833,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
                         item.get("content"),
                         item.get("description"),
                         item.get("title"),
+                        item.get("url"),
                     )
                 normalized_date = SearchService._normalize_news_publish_date(published_date)
 
@@ -1938,6 +1939,23 @@ class SearXNGSearchProvider(BaseSearchProvider):
             return True
 
         if source_lower.endswith("guba.eastmoney.com") or ("股吧" in title and "股票论坛社区" in content):
+            return True
+
+        if source_lower.endswith("sse.com.cn") and (
+            title == "最新公告 - 上海证券交易所"
+            or "/disclosure/listedinfo/announcement" in url.lower()
+        ):
+            return True
+
+        if source_lower.endswith("cninfo.com.cn") and (
+            title == "信息披露 - 巨潮资讯网"
+            or "pageofsearch" in url.lower()
+        ):
+            return True
+
+        if source_lower.endswith("ailegal.baidu.com") and (
+            "违规减持" in title or "行政处罚案例" in title or "股东违规减持" in title
+        ):
             return True
 
         if (source_lower.endswith("cn.investing.com") or source_lower.endswith("hk.investing.com")) and any(
@@ -2908,6 +2926,8 @@ class SearchService:
             re.compile(r"\d{4}年\d{1,2}月\d{1,2}日", re.IGNORECASE),
             re.compile(r"(?:日期|时间|发表于|发布于)\s*[:：]?\s*(\d{8})", re.IGNORECASE),
         )
+        url_ymd8_pattern = re.compile(r"(?:^|[^\d])(20\d{6})(?:[^\d]|$)")
+        url_prefixed_ymd8_pattern = re.compile(r"[/_=-]?[a-z]?(20\d{6})(?:\d{2,}|[^\d]|$)", re.IGNORECASE)
         for text in texts:
             if text is None:
                 continue
@@ -2922,6 +2942,10 @@ class SearchService:
                 if match.lastindex:
                     return next((group.strip() for group in match.groups() if group), None)
                 return match.group(0).strip()
+            if "://" in normalized:
+                url_match = url_ymd8_pattern.search(normalized) or url_prefixed_ymd8_pattern.search(normalized)
+                if url_match:
+                    return url_match.group(1)
         return None
 
     @classmethod

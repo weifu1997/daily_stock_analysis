@@ -153,6 +153,35 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertEqual(resp.results[0].published_date, "2026-04-10")
 
     @patch("src.search_service._get_with_retry")
+    def test_self_hosted_extracts_date_from_url_when_fields_empty(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "[担保]钱江生化(600796):为子公司提供担保的进展公告- CFi.CN 中财网",
+                        "url": "https://www.cfi.net.cn/p20260415003312.html",
+                        "content": "中财网版权所有(C) HTTPS://WWW.CFi.CN",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    },
+                    {
+                        "title": "重要提示",
+                        "url": "https://static.sse.com.cn/disclosure/bond/announcement/company/c/new/2026-04-15/115475_20260415_EZPL.pdf",
+                        "content": "公司控股股东保证本报告所载资料不存在虚假记载",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    },
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual([r.published_date for r in resp.results], ["2026-04-15", "2026-04-15"])
+
+    @patch("src.search_service._get_with_retry")
     def test_self_hosted_extracts_relative_chinese_date_from_content_when_fields_empty(self, mock_get):
         mock_get.return_value = self._response(
             json_payload={
@@ -180,6 +209,35 @@ class TestSearXNGSearchProvider(unittest.TestCase):
 
         self.assertTrue(resp.success)
         self.assertEqual(resp.results[0].published_date, "2026-04-12")
+
+    @patch("src.search_service._get_with_retry")
+    def test_self_hosted_extracts_explicit_date_from_content_when_fields_empty(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "钱江生化：公司无逾期担保",
+                        "url": "https://news.10jqka.com.cn/20260415/c676010066.shtml",
+                        "content": "证券日报网讯 2026-04-15 钱江生化（600796）发布公告称，截至本公告披露日，公司及控股子公司对外担保总额为170383万元。",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    },
+                    {
+                        "title": "另一个公告样本",
+                        "url": "https://finance.example.com/notice-2",
+                        "content": "公司公告披露时间：2026.04.15，后续将继续推进相关事项。",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    },
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual([r.published_date for r in resp.results], ["2026-04-15", "2026-04-15"])
 
     @patch("src.search_service._get_with_retry")
     def test_self_hosted_403_returns_specific_error(self, mock_get):
@@ -322,6 +380,49 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertTrue(resp.success)
         self.assertEqual(len(resp.results), 1)
         self.assertEqual(resp.results[0].title, "正常风险新闻")
+
+    @patch("src.search_service._get_with_retry")
+    def test_skips_generic_announcement_portal_and_legal_qa_noise(self, mock_get):
+        mock_get.return_value = self._response(
+            json_payload={
+                "results": [
+                    {
+                        "title": "最新公告 - 上海证券交易所",
+                        "url": "https://www.sse.com.cn/disclosure/listedinfo/announcement/",
+                        "content": "最新公告栏目提供上海证券交易所相关重要信息和通知，帮助用户了解最新动态。",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    },
+                    {
+                        "title": "信息披露 - 巨潮资讯网",
+                        "url": "http://www.cninfo.com.cn/new/commonUrl/pageOfSearch?url=disclosure/list/search",
+                        "content": "巨潮资讯网是中国证监会指定的上市公司信息披露网站，平台提供上市公司公告、公司资讯、公司互动、股东大会网络投票等内容功能。",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    },
+                    {
+                        "title": "违规减持被行政处罚案例 - ailegal.baidu.com",
+                        "url": "https://ailegal.baidu.com/legalarticle/qadetail?id=9f520013e48812250627",
+                        "content": "###文章摘要 1. 违规减持的法律后果。2. 违规减持行政处罚案例。",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    },
+                    {
+                        "title": "钱江生化：公司无逾期担保",
+                        "url": "https://news.10jqka.com.cn/20260415/c676010066.shtml",
+                        "content": "证券日报网讯 2026-04-15 钱江生化（600796）发布公告称，截至本公告披露日，公司及控股子公司对外担保总额为170383万元。",
+                        "publishedDate": None,
+                        "pubdate": "",
+                    },
+                ]
+            }
+        )
+
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual([r.title for r in resp.results], ["钱江生化：公司无逾期担保"])
 
     @patch("src.search_service._get_with_retry")
     def test_skips_quote_f10_announcement_and_forum_pages_from_real_samples(self, mock_get):
