@@ -2027,7 +2027,9 @@ class GeminiAnalyzer:
 | TTM 股息率 | {ttm_yield} | 公式：近12个月每股现金分红 / 当前价格 × 100% |
 | TTM 分红事件数 | {ttm_count} | |
 
-> 若上述字段为 N/A 或缺失，请明确写“数据缺失，无法判断”，禁止编造。
+> 分红相关字段（现金分红、股息率、分红事件数）若为 N/A 属正常情况，不影响财报分析。
+> 财报核心指标（营收、净利、ROE、经营现金流）若全部为 N/A，请明确写"财报数据缺失，无法判断"。
+> 若核心指标有值，请基于此判断业绩趋势，禁止编造数据。
 """
             if disclosure_date:
                 prompt += f"""
@@ -2062,7 +2064,62 @@ class GeminiAnalyzer:
 | 股东户数变动 | {institution_data.get('holder_num_change', 'N/A')} | 单位：户；负数通常代表筹码趋于集中 |
 | 股东户数统计截止日 | {institution_data.get('holder_num_end_date', 'N/A')} | |
 {holder_structure_rows}
-> 请结合前十大股东净变动与股东户数变动判断筹码分散/集中趋势；优先参考“持有人结构倾向/结构解读”，若字段缺失，明确写“数据缺失，无法判断”。
+> 请结合前十大股东净变动与股东户数变动判断筹码分散/集中趋势；优先参考"持有人结构倾向/结构解读"，若所有结构化字段均缺失，明确写"机构数据缺失"。
+"""
+
+        # 业绩预期预填充：从结构化财报数据生成 earnings_hint，避免 LLM 误写"数据缺失"
+        growth_block = (
+            fundamental_context.get("growth", {})
+            if isinstance(fundamental_context, dict)
+            else {}
+        )
+        growth_data = (
+            growth_block.get("data", growth_block)
+            if isinstance(growth_block, dict)
+            else {}
+        )
+        if isinstance(financial_report, dict) and any(
+            financial_report.get(k) is not None
+            for k in ("revenue", "net_profit_parent", "roe", "operating_cash_flow")
+        ):
+            earnings_hint_parts = []
+            rev = financial_report.get("revenue")
+            if rev is not None:
+                earnings_hint_parts.append(f"营收 {rev}")
+            profit = financial_report.get("net_profit_parent")
+            if profit is not None:
+                earnings_hint_parts.append(f"归母净利 {profit}")
+            roe_val = financial_report.get("roe")
+            if roe_val is not None:
+                earnings_hint_parts.append(f"ROE {roe_val}%")
+            ocf = financial_report.get("operating_cash_flow")
+            if ocf is not None:
+                earnings_hint_parts.append(f"经营现金流 {ocf}")
+            rev_yoy = growth_data.get("revenue_yoy")
+            if rev_yoy is not None:
+                earnings_hint_parts.append(f"营收同比 {rev_yoy}%")
+            profit_yoy = growth_data.get("net_profit_yoy") or growth_data.get("profit_yoy")
+            if profit_yoy is not None:
+                earnings_hint_parts.append(f"净利同比 {profit_yoy}%")
+            gross_margin = growth_data.get("gross_margin")
+            if gross_margin is not None:
+                earnings_hint_parts.append(f"毛利率 {gross_margin}%")
+            forecast = earnings_data.get("forecast_summary", "") if isinstance(earnings_data, dict) else ""
+            if forecast:
+                earnings_hint_parts.append(f"业绩预告: {forecast}")
+            express = earnings_data.get("quick_report_summary", "") if isinstance(earnings_data, dict) else ""
+            if express:
+                earnings_hint_parts.append(f"业绩快报: {express}")
+            rd_exp = financial_report.get("rd_exp")
+            if rd_exp is not None:
+                earnings_hint_parts.append(f"研发费用 {rd_exp}")
+            if earnings_hint_parts:
+                prompt += f"""
+### 业绩预期参考（系统自动提取，严禁写"数据缺失"）
+核心财务指标：{"；".join(earnings_hint_parts)}
+
+> 以上数据来自结构化财报，**必须据此分析业绩预期**，禁止输出"数据缺失，无法判断"。
+> 仅当上述所有指标均为 N/A 或空时，才允许写"财报数据缺失"。
 """
 
         financial_filter_summary = context.get("financial_filter_summary") if isinstance(context, dict) else None

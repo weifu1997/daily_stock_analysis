@@ -662,6 +662,42 @@ class StockAnalysisPipeline:
             if result:
                 fill_price_position_if_needed(result, trend_result, realtime_quote)
 
+            # Step 7.8: earnings_outlook fallback — LLM 若写了"数据缺失"但财报有数据，用代码层覆盖
+            if result and result.dashboard and fundamental_context:
+                intel = result.dashboard.get("intelligence", {})
+                outlook = str(intel.get("earnings_outlook", "")).strip()
+                if outlook and ("数据缺失" in outlook or "无法判断" in outlook):
+                    fc = fundamental_context if isinstance(fundamental_context, dict) else {}
+                    ed = fc.get("earnings", {}).get("data", {})
+                    fr = ed.get("financial_report", {}) if isinstance(ed, dict) else {}
+                    gd = fc.get("growth", {}).get("data", {})
+                    if not isinstance(gd, dict):
+                        gd = fc.get("growth", {}) if isinstance(fc.get("growth", {}), dict) else {}
+                    parts = []
+                    if fr.get("revenue") is not None:
+                        parts.append(f"营收{fr['revenue']}")
+                    if fr.get("net_profit_parent") is not None:
+                        parts.append(f"归母净利{fr['net_profit_parent']}")
+                    if fr.get("roe") is not None:
+                        parts.append(f"ROE{fr['roe']}%")
+                    if fr.get("operating_cash_flow") is not None:
+                        parts.append(f"经营现金流{fr['operating_cash_flow']}")
+                    rev_yoy = gd.get("revenue_yoy")
+                    if rev_yoy is not None:
+                        parts.append(f"营收同比{rev_yoy}%")
+                    profit_yoy = gd.get("net_profit_yoy") or gd.get("profit_yoy")
+                    if profit_yoy is not None:
+                        parts.append(f"净利同比{profit_yoy}%")
+                    forecast = ed.get("forecast_summary", "") if isinstance(ed, dict) else ""
+                    if forecast:
+                        parts.append(f"业绩预告: {forecast}")
+                    express = ed.get("quick_report_summary", "") if isinstance(ed, dict) else ""
+                    if express:
+                        parts.append(f"业绩快报: {express}")
+                    if parts:
+                        intel["earnings_outlook"] = "；".join(parts)
+                        result.dashboard["intelligence"] = intel
+
             # Step 8: 保存分析历史记录
             if result and result.success:
                 try:

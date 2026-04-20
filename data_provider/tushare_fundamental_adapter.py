@@ -206,6 +206,14 @@ class TushareFundamentalAdapter:
             "rd_exp": None,
             "operating_cash_flow": None,
             "roe": None,
+            "oper_cost": None,
+            "sell_exp": None,
+            "admin_exp": None,
+            "fin_exp": None,
+            "income_tax": None,
+            "invest_income": None,
+            "ebit": None,
+            "ebitda": None,
         }
         financial_summary = {
             "report_date": None,
@@ -219,6 +227,10 @@ class TushareFundamentalAdapter:
             "revenue_yoy": None,
             "profit_yoy": None,
             "roe": None,
+            "gross_margin": None,
+            "netprofit_margin": None,
+            "debt_to_assets": None,
+            "roa": None,
         }
 
         if income_row is not None:
@@ -234,6 +246,14 @@ class TushareFundamentalAdapter:
                     "operate_profit": _safe_float(income_row.get("operate_profit")),
                     "total_profit": _safe_float(income_row.get("total_profit")),
                     "rd_exp": _safe_float(income_row.get("rd_exp")),
+                    "oper_cost": _safe_float(income_row.get("oper_cost")),
+                    "sell_exp": _safe_float(income_row.get("sell_exp")),
+                    "admin_exp": _safe_float(income_row.get("admin_exp")),
+                    "fin_exp": _safe_float(income_row.get("fin_exp")),
+                    "income_tax": _safe_float(income_row.get("income_tax")),
+                    "invest_income": _safe_float(income_row.get("invest_income")),
+                    "ebit": _safe_float(income_row.get("ebit")),
+                    "ebitda": _safe_float(income_row.get("ebitda")),
                 }
             )
             financial_summary.update(
@@ -265,6 +285,10 @@ class TushareFundamentalAdapter:
             financial_summary["revenue_yoy"] = revenue_yoy
             financial_summary["profit_yoy"] = profit_yoy
             financial_summary["roe"] = roe
+            financial_summary["gross_margin"] = gross_margin
+            financial_summary["netprofit_margin"] = _safe_float(fina_row.get("netprofit_margin"))
+            financial_summary["debt_to_assets"] = _safe_float(fina_row.get("debt_to_assets"))
+            financial_summary["roa"] = _safe_float(fina_row.get("roa"))
             if not financial_report.get("report_date"):
                 financial_report["report_date"] = _normalize_report_date(fina_row.get("end_date"))
             if not financial_summary.get("report_date"):
@@ -273,6 +297,9 @@ class TushareFundamentalAdapter:
 
         if cashflow_row is not None:
             financial_report["operating_cash_flow"] = _safe_float(cashflow_row.get("n_cashflow_act"))
+            financial_report["n_cashflow_inv_act"] = _safe_float(cashflow_row.get("n_cashflow_inv_act"))
+            financial_report["n_cash_flows_fnc_act"] = _safe_float(cashflow_row.get("n_cash_flows_fnc_act"))
+            financial_report["c_cash_equ_end_period"] = _safe_float(cashflow_row.get("c_cash_equ_end_period"))
             result["source_chain"].append("financial_cashflow:tushare_cashflow")
 
         if self._has_meaningful_payload(financial_report):
