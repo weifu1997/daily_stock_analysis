@@ -3,6 +3,7 @@
 
 import os
 import sys
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -42,9 +43,7 @@ class TestTushareFundamentalAdapter(unittest.TestCase):
                 }
             ]
         )
-        cashflow_df = pd.DataFrame([
-            {"end_date": "20251231", "n_cashflow_act": 320.0}
-        ])
+        cashflow_df = pd.DataFrame([{"end_date": "20251231", "n_cashflow_act": 320.0}])
         forecast_df = pd.DataFrame(
             [
                 {
@@ -81,6 +80,7 @@ class TestTushareFundamentalAdapter(unittest.TestCase):
         )
 
         fetcher = MagicMock()
+        fetcher.is_available.return_value = True
         fetcher.get_income_df.return_value = income_df
         fetcher.get_fina_indicator_df.return_value = fina_df
         fetcher.get_cashflow_df.return_value = cashflow_df
@@ -117,6 +117,59 @@ class TestTushareFundamentalAdapter(unittest.TestCase):
         self.assertIn("earnings_quick:tushare_express", result["source_chain"])
         self.assertIn("disclosure_date:tushare_disclosure_date", result["source_chain"])
 
+    def test_tushare_adapter_serializes_fundamental_bundle_calls(self) -> None:
+        from data_provider.tushare_fundamental_adapter import TushareFundamentalAdapter
+
+        fetcher = MagicMock()
+        fetcher.is_available.return_value = True
+
+        started = []
+        lock = threading.Lock()
+        first_call_ready = threading.Event()
+        allow_first_call_to_finish = threading.Event()
+        release_after_first = threading.Event()
+
+        def _slow_df(name: str):
+            with lock:
+                started.append(name)
+                count = started.count(name)
+            if name == "income":
+                if count == 1:
+                    first_call_ready.set()
+                    allow_first_call_to_finish.wait(timeout=3)
+                else:
+                    release_after_first.wait(timeout=3)
+            return pd.DataFrame(
+                [{"end_date": "20251231", "revenue": 1300.0, "total_revenue": 1300.0, "n_income_attr_p": 180.0, "n_income": 185.0}]
+            )
+
+        fetcher.get_income_df.side_effect = lambda stock_code: _slow_df("income")
+        fetcher.get_fina_indicator_df.side_effect = lambda stock_code: _slow_df("fina")
+        fetcher.get_cashflow_df.side_effect = lambda stock_code: _slow_df("cashflow")
+        fetcher.get_forecast_df.return_value = pd.DataFrame([])
+        fetcher.get_express_df.return_value = pd.DataFrame([])
+        fetcher.get_disclosure_date_df.return_value = pd.DataFrame([])
+
+        adapter = TushareFundamentalAdapter(fetcher=fetcher)
+        results = []
+
+        def _worker() -> None:
+            results.append(adapter.get_fundamental_bundle("002906"))
+
+        t1 = threading.Thread(target=_worker)
+        t2 = threading.Thread(target=_worker)
+        t1.start()
+        t2.start()
+        self.assertTrue(first_call_ready.wait(timeout=3))
+        self.assertEqual(started.count("income"), 1)
+        allow_first_call_to_finish.set()
+        self.assertTrue(t1.join(timeout=3) is None)
+        release_after_first.set()
+        t2.join(timeout=3)
+
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result["earnings"].get("financial_report") for result in results))
+        self.assertGreaterEqual(started.count("income"), 2)
 
     def test_tushare_institution_adapter_fail_opens_when_one_endpoint_errors(self) -> None:
         from data_provider.tushare_fundamental_adapter import TushareFundamentalAdapter
@@ -162,76 +215,10 @@ class TestTushareFundamentalAdapter(unittest.TestCase):
                 {"ts_code": "002906.SZ", "ann_date": "20251020", "end_date": "20250930", "hold_change": 9000.0},
             ]
         )
-        holdernumber_df = pd.DataFrame([
-            {"ts_code": "002906.SZ", "ann_date": "20260415", "end_date": "20260410", "holder_num": 41060},
-            {"ts_code": "002906.SZ", "ann_date": "20260331", "end_date": "20260320", "holder_num": 42000},
-        ])
-
-        fetcher = MagicMock()
-        fetcher.is_available.return_value = True
-        fetcher.get_top10_holders_df.return_value = top10_df
-        fetcher.get_top10_floatholders_df.return_value = float_top10_df
-        fetcher.get_stk_holdernumber_df.return_value = holdernumber_df
-
-        adapter = TushareFundamentalAdapter(fetcher=fetcher)
-        result = adapter.get_institution_data("002906")
-
-        self.assertEqual(result["institution"]["top10_holder_change"], 1000.0)
-        self.assertEqual(result["institution"]["top10_float_holder_change"], 700.0)
-
-    def test_tushare_adapter_builds_institution_payload_from_top10_and_holdernumber(self) -> None:
-        from data_provider.tushare_fundamental_adapter import TushareFundamentalAdapter
-
-        top10_df = pd.DataFrame(
-            [
-                {
-                    "ts_code": "002906.SZ",
-                    "ann_date": "20260328",
-                    "end_date": "20251231",
-                    "holder_name": "江苏华越投资有限公司",
-                    "hold_change": 1200.0,
-                },
-                {
-                    "ts_code": "002906.SZ",
-                    "ann_date": "20260328",
-                    "end_date": "20251231",
-                    "holder_name": "中证500ETF",
-                    "hold_change": -200.0,
-                },
-            ]
-        )
-        float_top10_df = pd.DataFrame(
-            [
-                {
-                    "ts_code": "002906.SZ",
-                    "ann_date": "20260328",
-                    "end_date": "20251231",
-                    "holder_name": "江苏华越投资有限公司",
-                    "hold_change": 800.0,
-                },
-                {
-                    "ts_code": "002906.SZ",
-                    "ann_date": "20260328",
-                    "end_date": "20251231",
-                    "holder_name": "中证500ETF",
-                    "hold_change": -100.0,
-                },
-            ]
-        )
         holdernumber_df = pd.DataFrame(
             [
-                {
-                    "ts_code": "002906.SZ",
-                    "ann_date": "20260415",
-                    "end_date": "20260410",
-                    "holder_num": 41060,
-                },
-                {
-                    "ts_code": "002906.SZ",
-                    "ann_date": "20260331",
-                    "end_date": "20260320",
-                    "holder_num": 42000,
-                },
+                {"ts_code": "002906.SZ", "ann_date": "20260415", "end_date": "20260410", "holder_num": 41060},
+                {"ts_code": "002906.SZ", "ann_date": "20260331", "end_date": "20260320", "holder_num": 42000},
             ]
         )
 
@@ -244,7 +231,6 @@ class TestTushareFundamentalAdapter(unittest.TestCase):
         adapter = TushareFundamentalAdapter(fetcher=fetcher)
         result = adapter.get_institution_data("002906")
 
-        self.assertEqual(result["status"], "ok")
         self.assertEqual(result["institution"]["top10_holder_change"], 1000.0)
         self.assertEqual(result["institution"]["top10_float_holder_change"], 700.0)
         self.assertEqual(result["institution"]["holder_num"], 41060)

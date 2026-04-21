@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from threading import Semaphore
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pandas as pd
@@ -11,6 +12,9 @@ from .fundamental_adapter import _normalize_report_date, _safe_float, _safe_str
 
 if TYPE_CHECKING:
     from .tushare_fetcher import TushareFetcher
+
+
+_TUSHARE_FUNDAMENTAL_BUNDLE_GUARD = Semaphore(1)
 
 
 class TushareFundamentalAdapter:
@@ -187,12 +191,13 @@ class TushareFundamentalAdapter:
             result["errors"].append("tushare_unavailable")
             return result
 
-        income_row = self._latest_row(self._fetcher.get_income_df(stock_code))
-        fina_row = self._latest_row(self._fetcher.get_fina_indicator_df(stock_code))
-        cashflow_row = self._latest_row(self._fetcher.get_cashflow_df(stock_code))
-        forecast_row = self._latest_row(self._fetcher.get_forecast_df(stock_code))
-        express_row = self._latest_row(self._fetcher.get_express_df(stock_code))
-        disclosure_row = self._latest_row(self._fetcher.get_disclosure_date_df(stock_code))
+        with _TUSHARE_FUNDAMENTAL_BUNDLE_GUARD:
+            income_row = self._latest_row(self._fetcher.get_income_df(stock_code))
+            fina_row = self._latest_row(self._fetcher.get_fina_indicator_df(stock_code))
+            cashflow_row = self._latest_row(self._fetcher.get_cashflow_df(stock_code))
+            forecast_row = self._latest_row(self._fetcher.get_forecast_df(stock_code))
+            express_row = self._latest_row(self._fetcher.get_express_df(stock_code))
+            disclosure_row = self._latest_row(self._fetcher.get_disclosure_date_df(stock_code))
 
         financial_report = {
             "report_date": None,
