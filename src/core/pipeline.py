@@ -985,8 +985,26 @@ class StockAnalysisPipeline:
                 "invalid fundamental context",
             )
         )
+        enhanced["fundamental_quality"] = self._summarize_fundamental_quality(enhanced["fundamental_context"])
 
         return enhanced
+
+    @staticmethod
+    def _summarize_fundamental_quality(fundamental_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Summarize basic fundamental data availability without changing the raw payload."""
+        ctx = fundamental_context if isinstance(fundamental_context, dict) else {}
+        coverage = ctx.get("coverage") if isinstance(ctx.get("coverage"), dict) else {}
+        quality = {
+            "fundamental_data_unavailable": bool(
+                ctx.get("status") in {"failed", "not_supported"}
+                or coverage.get("valuation") in {"failed", "not_supported"}
+            ),
+            "earnings_expectation_unavailable": bool(
+                ctx.get("status") in {"failed", "not_supported"}
+                or coverage.get("earnings") in {"failed", "not_supported"}
+            ),
+        }
+        return quality
 
     def _attach_belong_boards_to_fundamental_context(
         self,

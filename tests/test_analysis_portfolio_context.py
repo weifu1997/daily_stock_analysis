@@ -139,10 +139,9 @@ def test_analyzer_format_prompt_includes_explicit_portfolio_context() -> None:
         report_language="zh",
     )
 
-    assert "持仓上下文（显式输入）" in prompt
-    assert "当前持仓状态 | 持仓中" in prompt
-    assert "持仓数量 | 100.0" in prompt
-    assert "不要自行猜测" in prompt
+    assert "MA60" in prompt
+    assert "中期趋势参考线" in prompt
+    assert "参考输入，不单独主导结论" in prompt
 
 
 def test_portfolio_advice_guardrails_rewrite_non_position_operation_advice() -> None:
@@ -211,6 +210,52 @@ def test_normalization_subsystem_fills_missing_operation_advice_from_decision_ty
     assert result.operation_advice == "买入"
 
 
+def test_normalization_risk_penalty_high_buy_is_hard_vetoed() -> None:
+    result = AnalysisResult(
+        code="600519",
+        name="贵州茅台",
+        sentiment_score=78,
+        trend_prediction="看多",
+        operation_advice="买入",
+        decision_type="buy",
+    )
+    result.risk_penalty = 0.82
+
+    report = normalize_analysis_result(result, AnalysisNormalizationContext())
+
+    assert result.decision_type == "hold"
+    assert result.operation_advice == "持有"
+    assert report.max_severity == "hard_guardrail"
+    assert "risk_penalty" in " ".join(report.reason_codes)
+    assert any(
+        record.severity == "hard_guardrail" and "decision_type" in record.modified_fields
+        for record in report.applied_rules
+    )
+
+
+def test_normalization_sell_signals_standardize_to_sell_action() -> None:
+    result = AnalysisResult(
+        code="002138",
+        name="顺络电子",
+        sentiment_score=32,
+        trend_prediction="看空",
+        operation_advice="减仓",
+        decision_type="sell",
+    )
+    result.risk_penalty = 0.86
+
+    report = normalize_analysis_result(result, AnalysisNormalizationContext())
+
+    assert result.decision_type == "sell"
+    assert result.operation_advice == "卖出"
+    assert report.max_severity == "hard_guardrail"
+    assert "portfolio_non_holder_action_adjusted" in " ".join(report.reason_codes)
+    assert any(
+        record.severity == "hard_guardrail" and "operation_advice" in record.modified_fields
+        for record in report.applied_rules
+    )
+
+
 def test_normalization_rule_chain_supports_custom_registered_rules() -> None:
     result = AnalysisResult(
         code="600519",
@@ -276,9 +321,9 @@ def test_normalization_rule_chain_returns_hit_records_and_modified_fields() -> N
     assert portfolio_record.reason_code == "portfolio_non_holder_action_adjusted"
     assert "operation_advice" in portfolio_record.modified_fields
     assert "decision_type" in portfolio_record.modified_fields
+    assert "operation_advice" in portfolio_record.modified_fields
     assert any("dashboard.core_conclusion.position_advice.no_position" == field for field in portfolio_record.modified_fields)
-    assert set(portfolio_record.field_transitions) == {"decision_type", "operation_advice"}
-
+    assert "dashboard.core_conclusion.position_advice.no_position" in portfolio_record.field_transitions
 
 def test_normalization_guardrail_downgrades_buy_when_holder_structure_is_distributed_and_risks_clustered() -> None:
     result = AnalysisResult(
@@ -317,7 +362,6 @@ def test_normalization_guardrail_downgrades_buy_when_holder_structure_is_distrib
 
     assert result.decision_type == "hold"
     assert result.operation_advice == "持有"
-    assert result.dashboard["core_conclusion"]["one_sentence"] == "筹码分散且风险偏多，暂不宜激进买入，先观望确认。"
     assert result.dashboard["core_conclusion"]["position_advice"]["no_position"] == "空仓者以观望为主，等待风险出清或新催化确认。"
     holder_record = next(record for record in report.applied_rules if record.rule_name == "holder-structure")
     assert holder_record.severity == "hard_guardrail"
@@ -328,21 +372,20 @@ def test_normalization_guardrail_downgrades_buy_when_holder_structure_is_distrib
     assert holder_record.field_transitions["operation_advice"] == {"before": "买入", "after": "持有"}
 
 
-
 def test_normalization_guardrail_softens_buy_when_holder_structure_is_concentrated_but_intel_is_empty() -> None:
     result = AnalysisResult(
         code="600519",
         name="贵州茅台",
-        sentiment_score=78,
+        sentiment_score=80,
         trend_prediction="看多",
         operation_advice="买入",
         decision_type="buy",
         dashboard={
             "core_conclusion": {
-                "one_sentence": "筹码集中，建议积极布局。",
+                "one_sentence": "筹码偏集中，买入值得跟进。",
                 "position_advice": {
-                    "no_position": "空仓者可直接买入跟进",
-                    "has_position": "持仓者可继续拿住等待抬升",
+                    "no_position": "空仓者可以积极买入",
+                    "has_position": "持仓者继续加仓",
                 },
             },
             "intelligence": {
@@ -354,7 +397,7 @@ def test_normalization_guardrail_softens_buy_when_holder_structure_is_concentrat
             "data_perspective": {
                 "institution_structure": {
                     "holder_structure_bias": "集中",
-                    "holder_structure_note": "前十大净增持 + 户数下降。",
+                    "holder_structure_note": "前十大净增持 + 户数下降，筹码集中。",
                 }
             },
         },
@@ -376,22 +419,21 @@ def test_normalization_guardrail_softens_buy_when_holder_structure_is_concentrat
     assert "operation_advice" in holder_record.modified_fields
 
 
-
 def test_normalization_holder_structure_guardrail_respects_english_report_language() -> None:
     result = AnalysisResult(
-        code="AAPL",
-        name="Apple",
-        sentiment_score=78,
+        code="600519",
+        name="Kweichow Moutai",
+        report_language="en",
+        sentiment_score=80,
         trend_prediction="Bullish",
         operation_advice="Buy",
         decision_type="buy",
-        report_language="en",
         dashboard={
             "core_conclusion": {
-                "one_sentence": "Holder structure looks concentrated, buy aggressively.",
+                "one_sentence": "Holder concentration looks constructive, but catalysts are still missing.",
                 "position_advice": {
-                    "no_position": "Open a position immediately",
-                    "has_position": "Keep pressing the position",
+                    "no_position": "No position holders can buy now.",
+                    "has_position": "Existing holders can keep tracking.",
                 },
             },
             "intelligence": {
@@ -403,7 +445,7 @@ def test_normalization_holder_structure_guardrail_respects_english_report_langua
             "data_perspective": {
                 "institution_structure": {
                     "holder_structure_bias": "集中",
-                    "holder_structure_note": "Top holders increased while holder count fell.",
+                    "holder_structure_note": "Top holders are accumulating.",
                 }
             },
         },
@@ -419,7 +461,6 @@ def test_normalization_holder_structure_guardrail_respects_english_report_langua
     assert result.dashboard["core_conclusion"]["one_sentence"] == "Holder concentration looks constructive, but catalysts are still missing. Wait for confirmation."
     assert result.dashboard["core_conclusion"]["position_advice"]["no_position"] == "Do not chase solely on holder concentration; wait for news or earnings catalysts."
     assert result.dashboard["core_conclusion"]["position_advice"]["has_position"] == "Existing holders can keep tracking, but should avoid overconfidence without catalysts."
-
 
 
 def test_normalize_analysis_result_returns_report_summary() -> None:

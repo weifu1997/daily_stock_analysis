@@ -4,13 +4,73 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Protocol, TYPE_CHECKING
 
-from .base_rules import ensure_decision_type_and_operation_advice_consistency
+from .base_rules import ensure_decision_type_and_operation_advice_consistency, localized_operation_advice_for_signal
 from .models import (
     AnalysisNormalizationContext,
     AnalysisNormalizationReport,
     RuleApplicationRecord,
 )
 from .portfolio_rules import HolderStructureRule, PortfolioContextRule
+
+RISK_PENALTY_DEFAULT_THRESHOLD = 0.7
+
+
+def _normalize_risk_penalty(value: Any) -> float:
+    try:
+        if value is None:
+            return 0.0
+        normalized = float(value)
+        if normalized != normalized:  # NaN
+            return 0.0
+        return normalized
+    except Exception:
+        return 0.0
+
+
+def _derive_position_strength(result) -> str:
+    decision = str(getattr(result, "decision_type", "hold") or "hold").strip().lower()
+    risk_penalty = _normalize_risk_penalty(getattr(result, "risk_penalty", None))
+    if decision == "buy" and risk_penalty < RISK_PENALTY_DEFAULT_THRESHOLD * 0.5:
+        return "trial"
+    if decision == "buy" and risk_penalty < RISK_PENALTY_DEFAULT_THRESHOLD:
+        return "light_add"
+    if decision == "buy" and risk_penalty >= RISK_PENALTY_DEFAULT_THRESHOLD:
+        return "neutral"
+    if decision == "sell":
+        return "defense"
+    return "neutral"
+
+
+class RiskPenaltyGuardrailRule:
+    name = "risk-penalty"
+
+    @staticmethod
+    def apply(result: "AnalysisResult", context: AnalysisNormalizationContext) -> None:
+        risk_penalty = _normalize_risk_penalty(getattr(result, "risk_penalty", None))
+        if str(getattr(result, "decision_type", "hold") or "hold").strip().lower() != "buy":
+            return
+        if risk_penalty < RISK_PENALTY_DEFAULT_THRESHOLD:
+            return
+        result.decision_type = "hold"
+        result.operation_advice = localized_operation_advice_for_signal(
+            "hold",
+            getattr(result, "report_language", "zh"),
+        )
+
+    @staticmethod
+    def describe_change(
+        *,
+        changed: bool,
+        modified_fields: List[str],
+        before: Any,
+        after: Any,
+        context: AnalysisNormalizationContext,
+    ) -> tuple[str, str]:
+        if not changed:
+            return "info", "risk_penalty_no_change"
+        if "decision_type" in modified_fields or "operation_advice" in modified_fields:
+            return "hard_guardrail", "risk_penalty_buy_downgraded"
+        return "hard_guardrail", "risk_penalty_adjusted"
 
 if TYPE_CHECKING:
     from src.analyzer import AnalysisResult
@@ -99,11 +159,34 @@ class DecisionConsistencyRule:
         return "info", "decision_consistency_adjusted"
 
 
+class PositionStrengthRule:
+    name = "position-strength"
+
+    @staticmethod
+    def apply(result: "AnalysisResult", context: AnalysisNormalizationContext) -> None:
+        result.position_strength = _derive_position_strength(result)
+
+    @staticmethod
+    def describe_change(
+        *,
+        changed: bool,
+        modified_fields: List[str],
+        before: Any,
+        after: Any,
+        context: AnalysisNormalizationContext,
+    ) -> tuple[str, str]:
+        if not changed:
+            return "info", "position_strength_no_change"
+        return "info", "position_strength_derived"
+
+
 _DEFAULT_RULES: List[NormalizationRule] = [
+    RiskPenaltyGuardrailRule(),
     DecisionConsistencyRule(),
     PortfolioContextRule(),
     HolderStructureRule(),
     DecisionConsistencyRule(),
+    PositionStrengthRule(),
 ]
 
 
@@ -176,30 +259,25 @@ def _get_value_by_path(payload: Any, dotted_path: str) -> Any:
 
 def _collect_field_transitions(before: Any, after: Any, modified_fields: List[str]) -> dict[str, dict[str, Any]]:
     transitions: dict[str, dict[str, Any]] = {}
-    safe_fields = {"decision_type", "operation_advice"}
-    for field_name in modified_fields:
-        if field_name not in safe_fields:
-            continue
-        transitions[str(field_name)] = {
-            "before": deepcopy(_get_value_by_path(before, field_name)),
-            "after": deepcopy(_get_value_by_path(after, field_name)),
+    for field_path in modified_fields:
+        transitions[field_path] = {
+            "before": _get_value_by_path(before, field_path),
+            "after": _get_value_by_path(after, field_path),
         }
     return transitions
 
 
 def _diff_paths(before: Any, after: Any, prefix: str = "") -> List[str]:
-    if before == after:
-        return []
-
+    paths: List[str] = []
     if isinstance(before, dict) and isinstance(after, dict):
-        paths: List[str] = []
-        keys = set(before.keys()) | set(after.keys())
+        keys = set(before) | set(after)
         for key in sorted(keys):
-            next_prefix = f"{prefix}.{key}" if prefix else str(key)
+            new_prefix = f"{prefix}.{key}" if prefix else key
             if key not in before or key not in after:
-                paths.append(next_prefix)
+                paths.append(new_prefix)
                 continue
-            paths.extend(_diff_paths(before[key], after[key], next_prefix))
+            paths.extend(_diff_paths(before[key], after[key], new_prefix))
         return paths
-
-    return [prefix or "<root>"]
+    if before != after:
+        paths.append(prefix)
+    return paths

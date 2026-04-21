@@ -98,6 +98,39 @@ class HolderStructureRule:
 
     name = "holder-structure"
 
+    _SELL_TOKENS = ("清仓", "卖出", "exit", "reduce", "trim")
+    _SELL_EXIT_TOKENS = ("清仓", "卖出", "exit")
+    _SELL_REDUCTION_TOKENS = ("减仓", "reduce", "trim")
+
+    @staticmethod
+    def _normalize_sell_action(result: "AnalysisResult") -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
+        original_advice = str(getattr(result, "operation_advice", "") or "").strip()
+        if not original_advice:
+            return False, None, None, None
+        lowered = original_advice.lower()
+        if not any(token in original_advice or token in lowered for token in HolderStructureRule._SELL_TOKENS):
+            return False, None, None, None
+        if any(token in original_advice or token in lowered for token in HolderStructureRule._SELL_EXIT_TOKENS):
+            reason_code = "sell_action_exit"
+        elif any(token in original_advice or token in lowered for token in HolderStructureRule._SELL_REDUCTION_TOKENS):
+            reason_code = "sell_action_reduce"
+        else:
+            reason_code = "sell_action_standardized"
+        if original_advice == "卖出" and str(getattr(result, "decision_type", "") or "").strip().lower() == "sell":
+            return False, "卖出", reason_code, original_advice
+        return True, "卖出", reason_code, original_advice
+
+    @staticmethod
+    def _apply_sell_action_normalization(result: "AnalysisResult") -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
+        changed, target_advice, reason_code, before_advice = HolderStructureRule._normalize_sell_action(result)
+        if not target_advice:
+            return False, None, None, None
+        if changed:
+            result.operation_advice = target_advice
+            if str(getattr(result, "decision_type", "") or "").strip().lower() != "sell":
+                result.decision_type = "sell"
+        return changed, target_advice, reason_code, before_advice
+
     @staticmethod
     def apply(result: "AnalysisResult", context: AnalysisNormalizationContext) -> None:
         dashboard = getattr(result, "dashboard", None)
@@ -114,7 +147,11 @@ class HolderStructureRule:
 
         normalized_decision = str(getattr(result, "decision_type", "") or "").strip().lower()
         if normalized_decision != "buy":
+            changed, _, _, _ = HolderStructureRule._apply_sell_action_normalization(result)
+            if changed:
+                return
             return
+        HolderStructureRule._apply_sell_action_normalization(result)
 
         intelligence = dashboard.get("intelligence") if isinstance(dashboard.get("intelligence"), dict) else {}
         risk_alerts = intelligence.get("risk_alerts") if isinstance(intelligence.get("risk_alerts"), list) else []

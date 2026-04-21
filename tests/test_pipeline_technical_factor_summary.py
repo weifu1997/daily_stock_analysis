@@ -146,3 +146,30 @@ class TestPipelineTechnicalFactorSummary:
         )
 
         assert enhanced["technical_factor_summary"]["states"]["trend_state"] == "below_ma20_above_ma60"
+        assert enhanced["fundamental_quality"] == {
+            "fundamental_data_unavailable": False,
+            "earnings_expectation_unavailable": False,
+        }
+
+    def test_enhance_context_marks_fundamental_quality_when_fundamental_context_is_failed(self):
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.config = SimpleNamespace(mx_enabled=False, report_language="zh")
+        pipeline.candidate_enrichment_service = None
+        pipeline.fetcher_manager = SimpleNamespace(
+            build_failed_fundamental_context=lambda code, reason: {"code": code, "status": "failed", "reason": reason}
+        )
+        pipeline.search_service = SimpleNamespace(news_window_days=3)
+
+        context = {"code": "000001", "stock_name": "平安银行", "today": {}, "yesterday": {}}
+        enhanced = pipeline._enhance_context(
+            context,
+            realtime_quote=None,
+            chip_data=None,
+            trend_result=None,
+            stock_name="平安银行",
+            fundamental_context={"status": "failed", "coverage": {"valuation": "failed", "earnings": "not_supported"}},
+            portfolio_context=None,
+        )
+
+        assert enhanced["fundamental_quality"]["fundamental_data_unavailable"] is True
+        assert enhanced["fundamental_quality"]["earnings_expectation_unavailable"] is True

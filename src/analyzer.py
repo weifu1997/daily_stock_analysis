@@ -35,13 +35,14 @@ from src.config import (
 from src.storage import persist_llm_usage
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.report_language import (
-    get_signal_level,
     get_no_data_text,
     get_placeholder_text,
+    get_signal_level,
     get_unknown_text,
     infer_decision_type_from_advice,
     localize_chip_health,
     localize_confidence_level,
+    localize_operation_advice,
     normalize_report_language,
 )
 from src.schemas.report_schema import AnalysisReportSchema
@@ -983,11 +984,11 @@ class GeminiAnalyzer:
     "trend_analysis": "走势形态分析",
     "short_term_outlook": "短期1-3日展望",
     "medium_term_outlook": "中期1-2周展望",
-    "technical_analysis": "技术面综合分析",
-    "ma_analysis": "均线系统分析",
-    "volume_analysis": "量能分析",
-    "pattern_analysis": "K线形态分析",
-    "fundamental_analysis": "基本面分析",
+    "technical_analysis": "技术面参考摘要（仅作辅助，不作为覆盖基本面结论的主因）",
+    "ma_analysis": "均线参考（辅助判断，不单独决定方向）",
+    "volume_analysis": "量能参考（辅助判断，不单独决定方向）",
+    "pattern_analysis": "K线形态参考（辅助判断，不单独决定方向）",
+    "fundamental_analysis": "基本面主约束",
     "sector_position": "板块行业分析",
     "company_highlights": "公司亮点/风险",
     "news_summary": "新闻摘要",
@@ -1136,11 +1137,11 @@ class GeminiAnalyzer:
     "trend_analysis": "走势形态分析",
     "short_term_outlook": "短期1-3日展望",
     "medium_term_outlook": "中期1-2周展望",
-    "technical_analysis": "技术面综合分析",
-    "ma_analysis": "均线系统分析",
-    "volume_analysis": "量能分析",
-    "pattern_analysis": "K线形态分析",
-    "fundamental_analysis": "基本面分析",
+    "technical_analysis": "技术面参考摘要（仅作辅助，不作为覆盖基本面结论的主因）",
+    "ma_analysis": "均线参考（辅助判断，不单独决定方向）",
+    "volume_analysis": "量能参考（辅助判断，不单独决定方向）",
+    "pattern_analysis": "K线形态参考（辅助判断，不单独决定方向）",
+    "fundamental_analysis": "基本面主约束",
     "sector_position": "板块行业分析",
     "company_highlights": "公司亮点/风险",
     "news_summary": "新闻摘要",
@@ -1294,6 +1295,13 @@ class GeminiAnalyzer:
 - All human-readable JSON values must be written in English.
 - Use the common English company name when you are confident; otherwise keep the original listed company name instead of inventing one.
 - This includes `stock_name`, `trend_prediction`, `operation_advice`, `confidence_level`, nested dashboard text, checklist items, and all narrative summaries.
+
+## Decision Priority Guardrails (highest priority)
+
+- Basic fundamentals and earnings outlook are hard constraints, not optional color commentary.
+- Strong fundamental or earnings signals must not be automatically collapsed into a conservative `hold/watch` conclusion just because technical signals are weak.
+- `buy` expresses direction only; do not silently turn it into a position-size signal.
+- If fundamentals are weak or missing, be explicit about the data gap instead of overfitting to short-term technicals.
 """
         return base_prompt + """
 
@@ -1931,13 +1939,14 @@ class GeminiAnalyzer:
 | 成交量 | {self._format_volume(today.get('volume'))} |
 | 成交额 | {self._format_amount(today.get('amount'))} |
 
-### 均线系统（关键判断指标）
+### 均线系统（参考输入，不单独主导结论）
 | 均线 | 数值 | 说明 |
 |------|------|------|
-| MA5 | {today.get('ma5', 'N/A')} | 短期趋势线 |
-| MA10 | {today.get('ma10', 'N/A')} | 中短期趋势线 |
-| MA20 | {today.get('ma20', 'N/A')} | 中期趋势线 |
-| 均线形态 | {context.get('ma_status', unknown_text)} | 多头/空头/缠绕 |
+| MA5 | {today.get('ma5', 'N/A')} | 短期参考线 |
+| MA10 | {today.get('ma10', 'N/A')} | 中短期参考线 |
+| MA20 | {today.get('ma20', 'N/A')} | 中期参考线 |
+| MA60 | {today.get('ma60', 'N/A')} | 中期趋势参考线 |
+| 均线形态 | {context.get('ma_status', unknown_text)} | 仅作辅助判断 |
 """
         
         # 添加实时行情数据（量比、换手率等）

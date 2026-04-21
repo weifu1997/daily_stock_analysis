@@ -410,6 +410,27 @@ class TestAgentResultConversion(unittest.TestCase):
         self.assertIn("agent:gemini", result.data_sources)
         self.assertIsNotNone(result.dashboard)
 
+    def test_normalize_analysis_result_sets_position_strength_for_buy_signal(self):
+        """Normalization should derive position_strength for production results."""
+        from src.analysis.normalization import AnalysisNormalizationContext, normalize_analysis_result
+        from src.analyzer import AnalysisResult
+
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=78,
+            trend_prediction="看多",
+            operation_advice="买入",
+            analysis_summary="趋势向好",
+        )
+        result.decision_type = "buy"
+        result.risk_penalty = 0.2
+
+        normalize_analysis_result(result, AnalysisNormalizationContext())
+
+        self.assertEqual(result.decision_type, "buy")
+        self.assertEqual(result.position_strength, "trial")
+
     def test_convert_failed_dashboard(self):
         """Failed AgentResult should produce a minimal AnalysisResult."""
         pipeline = self._make_pipeline()
