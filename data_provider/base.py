@@ -1528,10 +1528,7 @@ class DataFetcherManager:
         ]
 
         def _record_chip_event(source: str, status: str, reason: str = "") -> None:
-            try:
-                logger.info(f"[筹码分布][{source}] {stock_code} status={status} reason={reason or '-'}")
-            except Exception:
-                pass
+            logger.info("[筹码分布][%s] %s status=%s reason=%s", source, stock_code, status, reason or "-")
 
         # 先尝试真实筹码源
         for fetcher_name, fetcher_names, source_key in source_order:
@@ -1650,8 +1647,8 @@ class DataFetcherManager:
             if mx_cached_name is not None:
                 self._cache_stock_name(stock_code, mx_cached_name)
                 return mx_cached_name
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("get_stock_name(%s) mx cache lookup failed: %s", stock_code, exc)
 
         # 1. 先检查缓存
         cached_name = self._get_cached_stock_name(stock_code)

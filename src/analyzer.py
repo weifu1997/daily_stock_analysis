@@ -1607,6 +1607,21 @@ class GeminiAnalyzer:
 {chr(10).join('- ' + r for r in trend.get('risk_factors', ['无'])) if trend.get('risk_factors') else '- 无'}
 """
         
+        # 技术面因子摘要（辅助参考，不单独决定方向）
+        technical_factor_summary = context.get("technical_factor_summary")
+        if technical_factor_summary is not None:
+            tfs_states = technical_factor_summary.get("states", {}) if isinstance(technical_factor_summary, dict) else {}
+            tfs_flags = technical_factor_summary.get("flags", []) if isinstance(technical_factor_summary, dict) else []
+            tfs_trend = tfs_states.get("trend_state", "")
+            if tfs_trend or tfs_flags:
+                prompt += f"""
+### 技术面因子参考（辅助输入，不单独决定方向）
+- 趋势状态：{tfs_trend or '未分类'}
+- 特征标记：{', '.join(tfs_flags) or '无'}
+
+> 以上因子仅作辅助参考，分析结论应以基本面/业绩预期为主约束，技术面为辅。
+"""
+        
         # 添加昨日对比数据
         if 'yesterday' in context:
             volume_change = context.get('volume_change_ratio', 'N/A')

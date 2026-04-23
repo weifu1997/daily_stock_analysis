@@ -295,6 +295,18 @@ class BaseSearchProvider(ABC):
         """
         return self._execute_search(query, max_results=max_results, days=days)
 
+    @staticmethod
+    def _extract_domain(url: str) -> str:
+        """Extract domain from URL as source label."""
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(url)
+            domain = parsed.netloc.replace("www.", "")
+            return domain or "未知来源"
+        except (ValueError, TypeError):
+            return "未知来源"
+
 
 class TavilySearchProvider(BaseSearchProvider):
     """
@@ -498,18 +510,6 @@ class TavilySearchProvider(BaseSearchProvider):
                 search_time=elapsed
             )
     
-    @staticmethod
-    def _extract_domain(url: str) -> str:
-        """从 URL 提取域名作为来源"""
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            domain = parsed.netloc.replace('www.', '')
-            return domain or '未知来源'
-        except Exception:
-            return '未知来源'
-
-
 class SerpAPISearchProvider(BaseSearchProvider):
     """
     SerpAPI 搜索引擎
@@ -752,16 +752,6 @@ class SerpAPISearchProvider(BaseSearchProvider):
                 error_message=error_msg
             )
     
-    @staticmethod
-    def _extract_domain(url: str) -> str:
-        """从 URL 提取域名"""
-        try:
-            parsed = urlparse(url)
-            return parsed.netloc.replace('www.', '') or '未知来源'
-        except Exception:
-            return '未知来源'
-
-    @classmethod
     def _normalize_organic_text(cls, value: Any) -> str:
         """标准化 SerpAPI organic 文本字段。"""
         text = "" if value is None else str(value)
@@ -1140,18 +1130,6 @@ class BochaSearchProvider(BaseSearchProvider):
                 error_message=error_msg
             )
     
-    @staticmethod
-    def _extract_domain(url: str) -> str:
-        """从 URL 提取域名作为来源"""
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            domain = parsed.netloc.replace('www.', '')
-            return domain or '未知来源'
-        except Exception:
-            return '未知来源'
-
-
 class MiniMaxSearchProvider(BaseSearchProvider):
     """
     MiniMax Web Search (Coding Plan API)
@@ -1375,18 +1353,6 @@ class MiniMaxSearchProvider(BaseSearchProvider):
         except Exception:
             return f"HTTP {response.status_code}: {response.text[:200]}"
 
-    @staticmethod
-    def _extract_domain(url: str) -> str:
-        """Extract domain from URL as source label."""
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            domain = parsed.netloc.replace('www.', '')
-            return domain or '未知来源'
-        except Exception:
-            return '未知来源'
-
-
 class BraveSearchProvider(BaseSearchProvider):
     """
     Brave Search 搜索引擎
@@ -1550,17 +1516,6 @@ class BraveSearchProvider(BaseSearchProvider):
             return response.text[:200]
         except Exception:
             return f"HTTP {response.status_code}: {response.text[:200]}"
-
-    @staticmethod
-    def _extract_domain(url: str) -> str:
-        """从 URL 提取域名作为来源"""
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            domain = parsed.netloc.replace('www.', '')
-            return domain or '未知来源'
-        except Exception:
-            return '未知来源'
 
     def search(
         self,
@@ -1903,19 +1858,6 @@ class SearXNGSearchProvider(BaseSearchProvider):
                 error_message=f"未知错误: {e}",
             )
 
-    @staticmethod
-    def _extract_domain(url: str) -> str:
-        """Extract domain from URL as source label."""
-        try:
-            from urllib.parse import urlparse
-
-            parsed = urlparse(url)
-            domain = parsed.netloc.replace("www.", "")
-            return domain or "未知来源"
-        except Exception:
-            return "未知来源"
-
-    @classmethod
     def _is_low_quality_result(cls, item: dict, *, snippet: str, source: str) -> bool:
         title = str(item.get("title") or "").strip()
         content = str(item.get("content") or item.get("description") or "").strip()
