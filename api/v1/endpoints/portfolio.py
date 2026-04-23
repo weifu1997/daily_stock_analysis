@@ -7,8 +7,9 @@ import logging
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, Depends
 
+from api.deps import get_current_owner_id
 from api.v1.schemas.common import ErrorResponse
 from api.v1.schemas.portfolio import (
     PortfolioAccountCreateRequest,
@@ -108,10 +109,11 @@ def create_account(request: PortfolioAccountCreateRequest) -> PortfolioAccountIt
 )
 def list_accounts(
     include_inactive: bool = Query(False, description="Whether to include inactive accounts"),
+    owner_id: Optional[str] = Depends(get_current_owner_id),
 ) -> PortfolioAccountListResponse:
     service = PortfolioService()
     try:
-        rows = service.list_accounts(include_inactive=include_inactive)
+        rows = service.list_accounts(include_inactive=include_inactive, owner_id=owner_id)
         return PortfolioAccountListResponse(accounts=[PortfolioAccountItem(**item) for item in rows])
     except Exception as exc:
         raise _internal_error("List accounts failed", exc)
@@ -123,7 +125,7 @@ def list_accounts(
     responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Update portfolio account",
 )
-def update_account(account_id: int, request: PortfolioAccountUpdateRequest) -> PortfolioAccountItem:
+def update_account(account_id: int, request: PortfolioAccountUpdateRequest, owner_id: Optional[str] = Depends(get_current_owner_id)) -> PortfolioAccountItem:
     service = PortfolioService()
     try:
         updated = service.update_account(
@@ -154,7 +156,7 @@ def update_account(account_id: int, request: PortfolioAccountUpdateRequest) -> P
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Deactivate portfolio account",
 )
-def delete_account(account_id: int):
+def delete_account(account_id: int, owner_id: Optional[str] = Depends(get_current_owner_id)):
     service = PortfolioService()
     try:
         ok = service.deactivate_account(account_id)
@@ -220,6 +222,7 @@ def list_trades(
     side: Optional[str] = Query(None, description="Optional side filter: buy/sell"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    owner_id: Optional[str] = Depends(get_current_owner_id),
 ) -> PortfolioTradeListResponse:
     service = PortfolioService()
     try:
@@ -231,6 +234,7 @@ def list_trades(
             side=side,
             page=page,
             page_size=page_size,
+            owner_id=owner_id,
         )
         return PortfolioTradeListResponse(**data)
     except ValueError as exc:
@@ -302,6 +306,7 @@ def list_cash_ledger(
     direction: Optional[str] = Query(None, description="Optional direction filter: in/out"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    owner_id: Optional[str] = Depends(get_current_owner_id),
 ) -> PortfolioCashLedgerListResponse:
     service = PortfolioService()
     try:
@@ -312,6 +317,7 @@ def list_cash_ledger(
             direction=direction,
             page=page,
             page_size=page_size,
+            owner_id=owner_id,
         )
         return PortfolioCashLedgerListResponse(**data)
     except ValueError as exc:
@@ -387,6 +393,7 @@ def list_corporate_actions(
     action_type: Optional[str] = Query(None, description="Optional action type filter"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    owner_id: Optional[str] = Depends(get_current_owner_id),
 ) -> PortfolioCorporateActionListResponse:
     service = PortfolioService()
     try:
@@ -398,6 +405,7 @@ def list_corporate_actions(
             action_type=action_type,
             page=page,
             page_size=page_size,
+            owner_id=owner_id,
         )
         return PortfolioCorporateActionListResponse(**data)
     except ValueError as exc:
@@ -440,6 +448,7 @@ def get_snapshot(
     account_id: Optional[int] = Query(None, description="Optional account id, default returns all accounts"),
     as_of: Optional[date] = Query(None, description="Snapshot date, default today"),
     cost_method: str = Query("fifo", description="Cost method: fifo or avg"),
+    owner_id: Optional[str] = Depends(get_current_owner_id),
 ) -> PortfolioSnapshotResponse:
     service = PortfolioService()
     try:
@@ -447,6 +456,7 @@ def get_snapshot(
             account_id=account_id,
             as_of=as_of,
             cost_method=cost_method,
+            owner_id=owner_id,
         )
         return PortfolioSnapshotResponse(**data)
     except ValueError as exc:

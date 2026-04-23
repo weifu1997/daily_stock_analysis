@@ -102,8 +102,8 @@ class PortfolioService:
         )
         return self._account_to_dict(row)
 
-    def list_accounts(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
-        rows = self.repo.list_accounts(include_inactive=include_inactive)
+    def list_accounts(self, include_inactive: bool = False, owner_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        rows = self.repo.list_accounts(include_inactive=include_inactive, owner_id=owner_id)
         return [self._account_to_dict(r) for r in rows]
 
     def update_account(
@@ -312,9 +312,10 @@ class PortfolioService:
         side: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if account_id is not None:
-            self._require_active_account(account_id)
+            self._require_active_account(account_id, owner_id=owner_id)
         page, page_size = self._validate_paging(page=page, page_size=page_size)
         if date_from is not None and date_to is not None and date_from > date_to:
             raise ValueError("date_from must be <= date_to")
@@ -356,9 +357,10 @@ class PortfolioService:
         direction: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if account_id is not None:
-            self._require_active_account(account_id)
+            self._require_active_account(account_id, owner_id=owner_id)
         page, page_size = self._validate_paging(page=page, page_size=page_size)
         if date_from is not None and date_to is not None and date_from > date_to:
             raise ValueError("date_from must be <= date_to")
@@ -394,9 +396,10 @@ class PortfolioService:
         action_type: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if account_id is not None:
-            self._require_active_account(account_id)
+            self._require_active_account(account_id, owner_id=owner_id)
         page, page_size = self._validate_paging(page=page, page_size=page_size)
         if date_from is not None and date_to is not None and date_from > date_to:
             raise ValueError("date_from must be <= date_to")
@@ -438,11 +441,38 @@ class PortfolioService:
         account_id: Optional[int] = None,
         as_of: Optional[date] = None,
         cost_method: str = "fifo",
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """读取持仓快照（纯读操作，不触发写库）。"""
         payload = self._build_snapshot_payload(
             account_id=account_id,
             as_of=as_of,
             cost_method=cost_method,
+            owner_id=owner_id,
+        )
+        return payload["public"]
+
+    def materialize_snapshot(
+        self,
+        *,
+        account_id: Optional[int] = None,
+        as_of: Optional[date] = None,
+        cost_method: str = "fifo",
+        owner_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        重新计算并持久化持仓快照（显式写操作）。
+
+        适用场景：
+        - 交易录入后需要刷新缓存
+        - 定时任务批量重建 snapshot
+        - 用户显式点击"刷新持仓"
+        """
+        payload = self._build_snapshot_payload(
+            account_id=account_id,
+            as_of=as_of,
+            cost_method=cost_method,
+            owner_id=owner_id,
         )
         self._persist_snapshot_payload(payload)
         return payload["public"]
@@ -453,15 +483,16 @@ class PortfolioService:
         account_id: Optional[int] = None,
         as_of: Optional[date] = None,
         cost_method: str = "fifo",
+        owner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         as_of_date = as_of or date.today()
         method = self._normalize_cost_method(cost_method)
 
         if account_id is not None:
-            account = self._require_active_account(account_id)
+            account = self._require_active_account(account_id, owner_id=owner_id)
             account_rows = [account]
         else:
-            account_rows = self.repo.list_accounts(include_inactive=False)
+            account_rows = self.repo.list_accounts(include_inactive=False, owner_id=owner_id)
 
         account_snapshots: List[Dict[str, Any]] = []
         accounts_payload: List[Dict[str, Any]] = []
@@ -1355,17 +1386,18 @@ class PortfolioService:
             return None
         return value
 
-    def _require_active_account(self, account_id: int) -> Any:
-        account = self.repo.get_account(account_id, include_inactive=False)
+    def _require_active_account(self, account_id: int, owner_id: Optional[str] = None) -> Any:
+        account = self.repo.get_account(account_id, include_inactive=False, owner_id=owner_id)
         if account is None:
             raise ValueError(f"Active account not found: {account_id}")
         return account
 
-    def _require_active_account_in_session(self, *, session: Any, account_id: int) -> Any:
+    def _require_active_account_in_session(self, *, session: Any, account_id: int, owner_id: Optional[str] = None) -> Any:
         account = self.repo.get_account_in_session(
             session=session,
             account_id=account_id,
             include_inactive=False,
+            owner_id=owner_id,
         )
         if account is None:
             raise ValueError(f"Active account not found: {account_id}")

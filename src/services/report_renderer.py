@@ -151,7 +151,9 @@ def render(
         return [c for c in (checklist or []) if c.startswith("❌") or c.startswith("⚠️")]
 
     mx_enrichment = (extra_context or {}).get("mx_enrichment") if extra_context else None
+    portfolio_contexts = (extra_context or {}).get("portfolio_contexts") if extra_context else None
     context: Dict[str, Any] = {
+        "portfolio_contexts": portfolio_contexts,
         "report_date": report_date,
         "report_timestamp": report_timestamp,
         "results": sorted_results,

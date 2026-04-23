@@ -163,7 +163,7 @@ class SystemConfigApiTestCase(unittest.TestCase):
         self.assertIn("以 schedule 模式重新启动后生效", schedule_warning)
         self.assertNotIn("它属于启动期单次运行配置", schedule_warning)
 
-    def test_export_desktop_system_config_returns_raw_env_content(self) -> None:
+    def test_export_desktop_system_config_masks_sensitive_values(self) -> None:
         self.env_path.write_text(
             "# Desktop config\nSTOCK_LIST=600519,000001\nGEMINI_API_KEY=secret-key-value\n",
             encoding="utf-8",
@@ -173,7 +173,7 @@ class SystemConfigApiTestCase(unittest.TestCase):
 
         self.assertEqual(
             payload["content"],
-            "# Desktop config\nSTOCK_LIST=600519,000001\nGEMINI_API_KEY=secret-key-value\n",
+            "# Desktop config\nSTOCK_LIST=600519,000001\nGEMINI_API_KEY=******\n",
         )
         self.assertEqual(payload["config_version"], self.manager.get_config_version())
 

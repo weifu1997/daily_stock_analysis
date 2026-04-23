@@ -17,6 +17,7 @@ except ModuleNotFoundError:
     sys.modules["litellm"] = MagicMock()
 
 from src.analyzer import AnalysisResult
+from src.report_language import get_advice_buckets
 from src.services.report_renderer import render
 
 
@@ -70,6 +71,13 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("🔴卖出:0", out)
         self.assertNotIn("🔴卖出:1", out)
 
+    def test_get_advice_buckets_matches_operation_advice_only(self) -> None:
+        """Explicit bucket helper should ignore decision_type and use operation_advice only."""
+        buy = _make_result(operation_advice="买入", decision_type="sell")
+        hold = _make_result(operation_advice="观望", decision_type="buy")
+        sell = _make_result(operation_advice="卖出", decision_type="hold")
+        self.assertEqual(get_advice_buckets([buy, hold, sell]), (1, 1, 1))
+
     def test_render_markdown_full(self) -> None:
         """Markdown platform renders full report."""
         r = _make_result()
@@ -77,6 +85,79 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertIn("核心结论", out)
         self.assertIn("作战计划", out)
+
+    def test_render_markdown_uses_decision_context_when_provided(self) -> None:
+        """Decision structure should come from extra_context when available."""
+        r = _make_result(operation_advice="观望", decision_type="hold")
+        out = render(
+            "markdown",
+            [r],
+            summary_only=False,
+            extra_context={
+                "report_decision_map": {
+                    "600519": {
+                        "direction": "看多",
+                        "action": "买入",
+                        "risk_summary": "量能不足",
+                        "observation_item": "等回踩确认",
+                        "invalidation_condition": "跌破 13.00",
+                    }
+                }
+            },
+        )
+        self.assertIsNotNone(out)
+        self.assertIn("交易结构", out)
+        self.assertIn("看多", out)
+        self.assertIn("买入", out)
+        self.assertIn("量能不足", out)
+        self.assertIn("等回踩确认", out)
+        self.assertIn("跌破 13.00", out)
+
+    def test_render_wechat_uses_decision_context_when_provided(self) -> None:
+        """Wechat platform should surface the same decision context."""
+        r = _make_result(operation_advice="观望", decision_type="hold")
+        out = render(
+            "wechat",
+            [r],
+            extra_context={
+                "report_decision_map": {
+                    "600519": {
+                        "direction": "看多",
+                        "action": "买入",
+                        "risk_summary": "量能不足",
+                        "observation_item": "等回踩确认",
+                        "invalidation_condition": "跌破 13.00",
+                    }
+                }
+            },
+        )
+        self.assertIsNotNone(out)
+        self.assertIn("交易结构", out)
+        self.assertIn("看多", out)
+        self.assertIn("买入", out)
+        self.assertIn("量能不足", out)
+        self.assertIn("等回踩确认", out)
+        self.assertIn("跌破 13.00", out)
+
+    def test_render_brief_includes_decision_context(self) -> None:
+        """Brief reports should include action and invalidation hints from extra_context."""
+        r = _make_result(operation_advice="观望", decision_type="hold")
+        out = render(
+            "brief",
+            [r],
+            extra_context={
+                "report_decision_map": {
+                    "600519": {
+                        "action": "买入",
+                        "invalidation_condition": "跌破 13.00",
+                    }
+                }
+            },
+        )
+        self.assertIsNotNone(out)
+        self.assertIn("动作", out)
+        self.assertIn("买入", out)
+        self.assertIn("失效", out)
 
     def test_render_markdown_full_includes_institution_holder_section(self) -> None:
         r = _make_result(

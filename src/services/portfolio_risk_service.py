@@ -116,7 +116,7 @@ class PortfolioRiskService:
             current_date = start_date
             while current_date <= as_of_date:
                 if current_date not in existing_dates:
-                    self.portfolio_service.get_portfolio_snapshot(
+                    self.portfolio_service.materialize_snapshot(
                         account_id=account_id,
                         as_of=current_date,
                         cost_method=cost_method,
@@ -132,7 +132,7 @@ class PortfolioRiskService:
         current_date = start_date
         while current_date <= as_of_date:
             if not all((aid, current_date) in existing_pairs for aid in account_ids):
-                self.portfolio_service.get_portfolio_snapshot(
+                self.portfolio_service.materialize_snapshot(
                     account_id=None,
                     as_of=current_date,
                     cost_method=cost_method,

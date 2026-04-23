@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] 重构日报输出结构，新增结论/动作/风险/观察/数据质量分层，并在 markdown / wechat / brief 模板中统一消费运行态决策上下文。
+- [改进] 报告上下文从 LLM schema 中拆出，新增 `report_quality_map` 与 `report_decision_map` 走 `extra_context` 传递，避免把执行结构塞回模型输出。
+- [改进] 报告统一展示质量标签：`report_reliability`、`fallback_used`、`has_real_chip`、`has_valid_news`、`has_market_snapshot`，便于区分真实数据与降级兜底。
+- [测试] 补充报告结构、schema 边界与质量上下文的回归测试，覆盖 extra_context 透传与模板消费路径。
 - [改进] Tushare HTTP client 支持通过 `TUSHARE_API_URL` 切换官方或兼容代理上游，并移除运行时旧版 `tushare` SDK 实时行情 fallback，失败时交由其他实时数据源兜底。
 - [改进] 搜索 provider 优先级统一收口为可配置的 `search_provider_priority`（环境变量 `SEARCH_PROVIDER_PRIORITY`），消除三个搜索入口各自的隐式 provider 遍历顺序漂移。
 - [改进] 搜索结果新增去重（按 URL + 标题/来源）和排序（按日期降序、无日期排末尾），减少重复新闻污染 prompt。

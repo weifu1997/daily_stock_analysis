@@ -10,9 +10,9 @@ API 依赖注入模块
 3. 提供服务层依赖
 """
 
-from typing import Generator
+from typing import Generator, Optional
 
-from fastapi import Request
+from fastapi import Request, Header
 from sqlalchemy.orm import Session
 
 from src.storage import DatabaseManager
@@ -69,3 +69,13 @@ def get_system_config_service(request: Request) -> SystemConfigService:
         service = SystemConfigService()
         request.app.state.system_config_service = service
     return service
+
+
+def get_current_owner_id(x_owner_id: Optional[str] = Header(None, alias="X-Owner-Id")) -> Optional[str]:
+    """Extract owner identity from request header for multi-tenant isolation.
+
+    Returns None when the header is absent or blank (backward-compatible
+    single-user mode).  Callers should treat ``None`` as "no isolation"
+    and return all unscoped resources.
+    """
+    return (x_owner_id or "").strip() or None

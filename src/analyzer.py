@@ -50,654 +50,29 @@ from src.market_context import get_market_role, get_market_guidelines
 
 logger = logging.getLogger(__name__)
 
-
-def _is_gpt5_family_model(model: str) -> bool:
-    """Return True for gpt-5 family models that require temperature=1."""
-    normalized = (model or "").strip().lower()
-    if not normalized:
-        return False
-    short = normalized.rsplit("/", 1)[-1]
-    return short.startswith("gpt-5")
-
-
-class _LiteLLMStreamError(RuntimeError):
-    """Internal error wrapper that records whether any text was streamed."""
-
-    def __init__(self, message: str, *, partial_received: bool = False):
-        super().__init__(message)
-        self.partial_received = partial_received
-
-
-def _build_llm_response_preview(response_text: str, limit: int = 300) -> str:
-    """Build a log-safe preview that prefers parseable JSON over scratchpad preambles."""
-    text = (response_text or "").strip()
-    if not text:
-        return ""
-
-    def _parse_json_candidate(candidate: str) -> Optional[str]:
-        candidate = (candidate or "").strip()
-        if not candidate:
-            return None
-        try:
-            parsed = json.loads(candidate)
-            return json.dumps(parsed, ensure_ascii=False)
-        except Exception:
-            return None
-
-    json_fence_match = re.search(r"```json\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
-    if json_fence_match:
-        parsed_candidate = _parse_json_candidate(json_fence_match.group(1))
-        if parsed_candidate:
-            text = parsed_candidate
-        else:
-            text = re.sub(r"```.*?```", "", text, flags=re.DOTALL).strip()
-    else:
-        json_start = min(
-            [idx for idx in (text.find("{"), text.find("[")) if idx >= 0],
-            default=-1,
-        )
-        if json_start >= 0:
-            parsed_candidate = _parse_json_candidate(text[json_start:])
-            if parsed_candidate:
-                text = parsed_candidate
-        text = re.sub(r"```.*?```", "", text, flags=re.DOTALL).strip()
-
-    if not text.startswith(("{", "[")):
-        first_cjk_match = re.search(r"[\u4e00-\u9fff]", text)
-        if first_cjk_match and first_cjk_match.start() > 0:
-            prefix = text[: first_cjk_match.start()]
-            if re.search(r"[A-Za-z]", prefix):
-                text = text[first_cjk_match.start() :].strip()
-
-    if len(text) > limit:
-        return text[:limit] + "..."
-    return text
-
-
-def check_content_integrity(result: "AnalysisResult") -> Tuple[bool, List[str]]:
-    """
-    Check mandatory fields for report content integrity.
-    Returns (pass, missing_fields). Module-level for use by pipeline (agent weak mode).
-    """
-    missing: List[str] = []
-    if result.sentiment_score is None:
-        missing.append("sentiment_score")
-    advice = result.operation_advice
-    if not advice or not isinstance(advice, str) or not advice.strip():
-        missing.append("operation_advice")
-    summary = result.analysis_summary
-    if not summary or not isinstance(summary, str) or not summary.strip():
-        missing.append("analysis_summary")
-    dash = result.dashboard if isinstance(result.dashboard, dict) else {}
-    core = dash.get("core_conclusion")
-    core = core if isinstance(core, dict) else {}
-    if not (core.get("one_sentence") or "").strip():
-        missing.append("dashboard.core_conclusion.one_sentence")
-    intel = dash.get("intelligence")
-    intel = intel if isinstance(intel, dict) else None
-    if intel is None or "risk_alerts" not in intel:
-        missing.append("dashboard.intelligence.risk_alerts")
-    if result.decision_type in ("buy", "hold"):
-        battle = dash.get("battle_plan")
-        battle = battle if isinstance(battle, dict) else {}
-        sp = battle.get("sniper_points")
-        sp = sp if isinstance(sp, dict) else {}
-        stop_loss = sp.get("stop_loss")
-        if stop_loss is None or (isinstance(stop_loss, str) and not stop_loss.strip()):
-            missing.append("dashboard.battle_plan.sniper_points.stop_loss")
-    return len(missing) == 0, missing
-
-
-def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) -> None:
-    """Fill missing mandatory fields with placeholders (in-place). Module-level for pipeline."""
-    placeholder = get_placeholder_text(getattr(result, "report_language", "zh"))
-    for field in missing_fields:
-        if field == "sentiment_score":
-            result.sentiment_score = 50
-        elif field == "operation_advice":
-            result.operation_advice = result.operation_advice or placeholder
-        elif field == "analysis_summary":
-            result.analysis_summary = result.analysis_summary or placeholder
-        elif field == "dashboard.core_conclusion.one_sentence":
-            if not result.dashboard:
-                result.dashboard = {}
-            if "core_conclusion" not in result.dashboard:
-                result.dashboard["core_conclusion"] = {}
-            result.dashboard["core_conclusion"]["one_sentence"] = (
-                result.dashboard["core_conclusion"].get("one_sentence") or placeholder
-            )
-        elif field == "dashboard.intelligence.risk_alerts":
-            if not result.dashboard:
-                result.dashboard = {}
-            if "intelligence" not in result.dashboard:
-                result.dashboard["intelligence"] = {}
-            if "risk_alerts" not in result.dashboard["intelligence"]:
-                result.dashboard["intelligence"]["risk_alerts"] = []
-        elif field == "dashboard.battle_plan.sniper_points.stop_loss":
-            if not result.dashboard:
-                result.dashboard = {}
-            if "battle_plan" not in result.dashboard:
-                result.dashboard["battle_plan"] = {}
-            if "sniper_points" not in result.dashboard["battle_plan"]:
-                result.dashboard["battle_plan"]["sniper_points"] = {}
-            result.dashboard["battle_plan"]["sniper_points"]["stop_loss"] = placeholder
-
-
-# ---------- chip_structure fallback (Issue #589) ----------
-
-_CHIP_KEYS: tuple = ("profit_ratio", "avg_cost", "concentration", "chip_health", "source", "confidence", "method")
-
-
-def _is_value_placeholder(v: Any) -> bool:
-    """True if value is empty or placeholder (N/A, 数据缺失, etc.)."""
-    if v is None:
-        return True
-    if isinstance(v, (int, float)) and v == 0:
-        return True
-    s = str(v).strip().lower()
-    return s in ("", "n/a", "na", "数据缺失", "未知", "data unavailable", "unknown", "tbd")
-
-
-def _safe_float(v: Any, default: Optional[float] = 0.0) -> Optional[float]:
-    """Safely convert to float; return default on failure. Private helper for chip fill."""
-    if v is None:
-        return default
-    if isinstance(v, bool):
-        return default
-    if isinstance(v, (int, float)):
-        try:
-            value = float(v)
-            return default if math.isnan(value) or math.isinf(value) else value
-        except (ValueError, TypeError):
-            return default
-    try:
-        s = str(v).strip()
-        if not s or s.lower() in {"n/a", "na", "none", "null", "unknown", "tbd", "数据缺失"}:
-            return default
-        value = float(s)
-        return default if math.isnan(value) or math.isinf(value) else value
-    except (TypeError, ValueError):
-        return default
-
-
-def _derive_chip_health(profit_ratio: float, concentration_90: float, language: str = "zh") -> str:
-    """Derive chip_health from profit_ratio and concentration_90."""
-    if profit_ratio >= 0.9:
-        return localize_chip_health("警惕", language)
-    if concentration_90 >= 0.25:
-        return localize_chip_health("警惕", language)
-    if concentration_90 <= 0.15 and profit_ratio >= 0.3:
-        return localize_chip_health("健康", language)
-    return localize_chip_health("一般", language)
-
-
-def _classify_chip_source(source: Any) -> tuple[str, bool, str]:
-    normalized = str(source or "").strip().lower()
-    if not normalized or normalized in {"estimated", "estimated_ohlcv", "fallback", "unknown"}:
-        return "estimated", True, "fallback_estimated"
-    if normalized.startswith("estimated"):
-        return "estimated", True, "fallback_estimated"
-    return "real", False, "real_chip"
-
-
-def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dict[str, Any]:
-    """Build chip_structure dict from ChipDistribution or dict."""
-    if hasattr(chip_data, "profit_ratio"):
-        pr = _safe_float(chip_data.profit_ratio, default=0.0) or 0.0
-        raw_avg_cost = getattr(chip_data, "avg_cost", None)
-        ac = _safe_float(raw_avg_cost, default=None)
-        c90 = _safe_float(getattr(chip_data, "concentration_90", None), default=0.0) or 0.0
-        source = getattr(chip_data, "source", "estimated")
-        confidence = _safe_float(getattr(chip_data, "confidence", None), default=None)
-        method = getattr(chip_data, "method", "")
-    else:
-        d = chip_data if isinstance(chip_data, dict) else {}
-        pr = _safe_float(d.get("profit_ratio"), default=0.0) or 0.0
-        raw_avg_cost = d.get("avg_cost")
-        ac = _safe_float(raw_avg_cost, default=None)
-        c90 = _safe_float(d.get("concentration_90", d.get("concentration")), default=0.0) or 0.0
-        source = d.get("source", "estimated")
-        confidence = _safe_float(d.get("confidence"), default=None)
-        method = d.get("method", "")
-
-    avg_cost_out: Any
-    if isinstance(raw_avg_cost, str):
-        avg_cost_out = raw_avg_cost
-    elif ac in (None, 0.0):
-        avg_cost_out = "N/A"
-    else:
-        avg_cost_out = ac
-
-    confidence_out: Any
-    if confidence is None:
-        confidence_out = "N/A"
-    else:
-        confidence_out = f"{confidence:.0%}"
-
-    chip_health = _derive_chip_health(pr, c90, language=language)
-    source_value = source or "estimated"
-    source_category, is_estimated, data_reliability = _classify_chip_source(source_value)
-    return {
-        "profit_ratio": f"{pr:.1%}",
-        "profit_ratio_raw": pr,
-        "avg_cost": avg_cost_out,
-        "avg_cost_raw": ac if ac is not None else None,
-        "concentration": f"{c90:.2%}",
-        "concentration_raw": c90,
-        "chip_health": chip_health,
-        "source": source_value,
-        "source_category": source_category,
-        "is_estimated": is_estimated,
-        "data_reliability": data_reliability,
-        "confidence": confidence_out,
-        "confidence_raw": confidence,
-        "method": method or "truncated_gaussian",
-    }
-
-
-_INSTITUTION_KEYS: tuple = (
-    "top10_holder_change",
-    "top10_float_holder_change",
-    "holder_num",
-    "holder_num_change",
-    "holder_num_end_date",
-    "holder_num_ann_date",
-    "institution_holding_change",
-    "holder_structure_bias",
-    "holder_structure_note",
+from src.analyzer_helpers import (  # noqa: E402 - keep backward-compatible module surface
+    _CHIP_KEYS,
+    _INSTITUTION_KEYS,
+    _LiteLLMStreamError,
+    _PRICE_POS_KEYS,
+    _build_chip_structure_from_data,
+    _build_llm_response_preview,
+    _classify_chip_source,
+    _derive_chip_health,
+    _derive_holder_structure_summary,
+    _is_gpt5_family_model,
+    _is_value_placeholder,
+    _safe_float,
+    analyze_chip_chain_snapshot,
+    apply_placeholder_fill,
+    check_content_integrity,
+    fill_chip_structure_if_needed,
+    fill_institution_structure_if_needed,
+    fill_price_position_if_needed,
+    get_stock_name_multi_source,
+    record_chip_chain_event,
 )
 
-
-def _derive_holder_structure_summary(institution_data: Dict[str, Any]) -> Dict[str, str]:
-    """Derive human-readable holder structure interpretation from institution signals."""
-    if not isinstance(institution_data, dict):
-        return {}
-
-    def _read_signal(key: str) -> Optional[float]:
-        raw_value = institution_data.get(key)
-        if raw_value is None:
-            return None
-        if isinstance(raw_value, str) and raw_value.strip().lower() in {
-            "",
-            "n/a",
-            "na",
-            "none",
-            "null",
-            "unknown",
-            "tbd",
-            "data unavailable",
-            "数据缺失",
-            "未知",
-        }:
-            return None
-        return _safe_float(raw_value, default=None)
-
-    top10_change = _read_signal("top10_holder_change")
-    top10_label = "前十大"
-    if top10_change is None:
-        top10_change = _read_signal("top10_float_holder_change")
-        top10_label = "前十大流通股东"
-    holder_num_change = _read_signal("holder_num_change")
-
-    def _sign(value: Optional[float]) -> int:
-        if value is None:
-            return 0
-        if value > 0:
-            return 1
-        if value < 0:
-            return -1
-        return 0
-
-    known_signal_count = sum(value is not None for value in (top10_change, holder_num_change))
-    if known_signal_count == 0:
-        return {}
-    if known_signal_count == 1 and (top10_change == 0 or holder_num_change == 0):
-        return {}
-
-    top10_sign = _sign(top10_change)
-    holder_sign = _sign(holder_num_change)
-
-    if top10_sign == 0 and holder_sign == 0:
-        return {
-            "holder_structure_bias": "中性",
-            "holder_structure_note": "前十大与股东户数均基本持平，机构/股东结构变化不明显。",
-        }
-
-    if top10_sign > 0 and holder_sign < 0:
-        return {
-            "holder_structure_bias": "集中",
-            "holder_structure_note": f"{top10_label}净增持 + 户数下降，筹码向核心持有人集中，结构偏强。",
-        }
-    if top10_sign < 0 and holder_sign > 0:
-        return {
-            "holder_structure_bias": "分散",
-            "holder_structure_note": f"{top10_label}净减持 + 户数上升，筹码扩散，需警惕大户退出后被更分散资金承接。",
-        }
-    if top10_sign < 0 and holder_sign < 0:
-        return {
-            "holder_structure_bias": "中性",
-            "holder_structure_note": f"{top10_label}净减持 + 户数下降，存在大户退出但散户未显著接盘，筹码并非简单分散。",
-        }
-    if top10_sign > 0 and holder_sign > 0:
-        return {
-            "holder_structure_bias": "中性",
-            "holder_structure_note": f"{top10_label}净增持 + 户数上升，说明增量资金并非只来自核心持有人，集中度改善有限。",
-        }
-    if top10_sign == 0 and holder_sign < 0:
-        return {
-            "holder_structure_bias": "集中",
-            "holder_structure_note": f"{top10_label}基本持平 + 户数下降，筹码向存量持有人集中，但未见前十大明显增持。",
-        }
-    if top10_sign == 0 and holder_sign > 0:
-        return {
-            "holder_structure_bias": "分散",
-            "holder_structure_note": f"{top10_label}基本持平 + 户数上升，筹码趋于分散，但未见前十大明显减持。",
-        }
-    if top10_sign > 0:
-        return {
-            "holder_structure_bias": "集中",
-            "holder_structure_note": f"{top10_label}净增持，但户数变化缺失，暂按筹码偏集中理解。",
-        }
-    if top10_sign < 0:
-        return {
-            "holder_structure_bias": "分散",
-            "holder_structure_note": f"{top10_label}净减持，但户数变化缺失，暂按筹码偏分散理解。",
-        }
-    if holder_sign < 0:
-        return {
-            "holder_structure_bias": "集中",
-            "holder_structure_note": "股东户数下降，但前十大净变动缺失，暂按筹码偏集中理解。",
-        }
-    return {
-        "holder_structure_bias": "分散",
-        "holder_structure_note": "股东户数上升，但前十大净变动缺失，暂按筹码偏分散理解。",
-    }
-
-
-def fill_institution_structure_if_needed(result: "AnalysisResult", fundamental_context: Any) -> None:
-    """Fill dashboard.data_perspective.institution_structure from fundamental_context in-place."""
-    if not result or not isinstance(fundamental_context, dict):
-        return
-    try:
-        institution_block = fundamental_context.get("institution") or {}
-        institution_data = institution_block.get("data") if isinstance(institution_block, dict) else {}
-        if not isinstance(institution_data, dict) or not institution_data:
-            return
-        if not result.dashboard:
-            result.dashboard = {}
-        dash = result.dashboard
-        dp = dash.get("data_perspective") or {}
-        dash["data_perspective"] = dp
-        current = dp.get("institution_structure") or {}
-        merged = dict(current)
-        derived = _derive_holder_structure_summary(institution_data)
-
-        def _is_institution_missing(value: Any) -> bool:
-            if value is None:
-                return True
-            if isinstance(value, str):
-                return value.strip().lower() in {
-                    "",
-                    "n/a",
-                    "na",
-                    "none",
-                    "null",
-                    "unknown",
-                    "tbd",
-                    "data unavailable",
-                    "数据缺失",
-                    "未知",
-                }
-            return False
-
-        for key in _INSTITUTION_KEYS:
-            source_value = institution_data.get(key)
-            if key in derived:
-                source_value = derived.get(key)
-            if _is_institution_missing(merged.get(key)) and not _is_institution_missing(source_value):
-                merged[key] = source_value
-        if merged:
-            dp["institution_structure"] = merged
-            logger.info("[institution_structure] Filled institution fields from fundamental_context")
-    except Exception as e:
-        logger.warning("[institution_structure] Fill failed, skipping: %s", e)
-
-
-def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> None:
-    """When chip_data exists, fill chip_structure placeholder fields from chip_data (in-place)."""
-    if not result or not chip_data:
-        return
-    try:
-        if not result.dashboard:
-            result.dashboard = {}
-        dash = result.dashboard
-        dp = dash.get("data_perspective") or {}
-        dash["data_perspective"] = dp
-        cs = dp.get("chip_structure") or {}
-        merged = dict(cs)
-        filled = _build_chip_structure_from_data(
-            chip_data,
-            language=getattr(result, "report_language", "zh"),
-        )
-        for k in _CHIP_KEYS:
-            if _is_value_placeholder(merged.get(k)) and not _is_value_placeholder(filled.get(k)):
-                merged[k] = filled[k]
-        for raw_key in (
-            "profit_ratio_raw",
-            "avg_cost_raw",
-            "concentration_raw",
-            "confidence_raw",
-            "source_category",
-            "is_estimated",
-            "data_reliability",
-        ):
-            if raw_key not in merged and raw_key in filled:
-                merged[raw_key] = filled[raw_key]
-        current_source = merged.get("source")
-        current_source_category, current_is_estimated, _ = _classify_chip_source(current_source)
-        if current_source in (
-            None,
-            "",
-            "N/A",
-            "n/a",
-            "NA",
-            "na",
-            "数据缺失",
-            "真实",
-            "real",
-            "真实/estimated_ohlcv",
-            "tushare_cyq_perf/tushare_cyq_chips",
-            "tushare_cyq_perf/tushare_cyq_chips/akshare/estimated_ohlcv",
-        ) or (current_is_estimated and filled.get("source_category") == "real"):
-            merged["source"] = filled.get("source", "estimated")
-            merged["source_category"] = filled.get("source_category", current_source_category)
-            merged["is_estimated"] = filled.get("is_estimated", current_is_estimated)
-            merged["data_reliability"] = filled.get("data_reliability")
-        if _is_value_placeholder(merged.get("method")):
-            merged["method"] = filled.get("method", "truncated_gaussian")
-        if _is_value_placeholder(merged.get("confidence")):
-            merged["confidence"] = filled.get("confidence", "N/A")
-        dp["chip_structure"] = merged
-        logger.info("[chip_structure] Filled chip fields from data source (Issue #589)")
-        record_chip_chain_event(
-            getattr(result, "stock_code", "-"),
-            "fill",
-            "ok",
-            source=merged.get("source", filled.get("source", "-")),
-            confidence=merged.get("confidence", filled.get("confidence")),
-            method=merged.get("method", filled.get("method", "")),
-            reason="filled_from_chip_data",
-        )
-    except Exception as e:
-        logger.warning("[chip_structure] Fill failed, skipping: %s", e)
-
-
-def record_chip_chain_event(
-    stock_code: str,
-    stage: str,
-    status: str,
-    *,
-    source: str = "",
-    confidence: Any = None,
-    method: str = "",
-    reason: str = "",
-    extra: str = "",
-) -> None:
-    """Structured chip-chain audit log for source / fallback / data-abnormal separation."""
-    confidence_text = "N/A"
-    try:
-        c = _safe_float(confidence, default=None)
-        confidence_text = f"{c:.0%}" if c is not None else "N/A"
-    except Exception:
-        confidence_text = "N/A"
-    logger.info(
-        "[chip_chain] %s stage=%s status=%s source=%s confidence=%s method=%s reason=%s extra=%s",
-        stock_code,
-        stage,
-        status,
-        source or "-",
-        confidence_text,
-        method or "-",
-        reason or "-",
-        extra or "-",
-    )
-
-
-def analyze_chip_chain_snapshot(stock_code: str, chip_data: Any, result: Optional[Any] = None) -> Dict[str, Any]:
-    """Run a real chip-chain snapshot and emit one-line audit summary."""
-    if not chip_data:
-        record_chip_chain_event(stock_code, "snapshot", "fallback", source="fallback_missing", reason="chip_data_missing")
-        return {
-            "stock_code": stock_code,
-            "status": "fallback",
-            "source": "fallback_missing",
-            "confidence": "N/A",
-            "method": "fallback_placeholder",
-        }
-
-    summary = _build_chip_structure_from_data(chip_data, language=getattr(result, "report_language", "zh") if result else "zh")
-    src = summary.get("source", "-")
-    conf = summary.get("confidence", "N/A")
-    method = summary.get("method", "-")
-    status = "ok"
-    if src in ("fallback_missing", "数据缺失"):
-        status = "fallback"
-    elif src.startswith("estimated"):
-        status = "estimated"
-    record_chip_chain_event(stock_code, "snapshot", status, source=src, confidence=conf, method=method, reason="snapshot_ready", extra=f"health={summary.get('chip_health','-')}")
-    return summary
-_PRICE_POS_KEYS = ("ma5", "ma10", "ma20", "bias_ma5", "bias_status", "current_price", "support_level", "resistance_level")
-
-
-def fill_price_position_if_needed(
-    result: "AnalysisResult",
-    trend_result: Any = None,
-    realtime_quote: Any = None,
-) -> None:
-    """Fill missing price_position fields from trend_result / realtime data (in-place)."""
-    if not result:
-        return
-    try:
-        if not result.dashboard:
-            result.dashboard = {}
-        dash = result.dashboard
-        dp = dash.get("data_perspective") or {}
-        dash["data_perspective"] = dp
-        pp = dp.get("price_position") or {}
-
-        computed: Dict[str, Any] = {}
-        if trend_result:
-            tr = trend_result if isinstance(trend_result, dict) else (
-                trend_result.__dict__ if hasattr(trend_result, "__dict__") else {}
-            )
-            computed["ma5"] = tr.get("ma5")
-            computed["ma10"] = tr.get("ma10")
-            computed["ma20"] = tr.get("ma20")
-            computed["bias_ma5"] = tr.get("bias_ma5")
-            computed["current_price"] = tr.get("current_price")
-            support_levels = tr.get("support_levels") or []
-            resistance_levels = tr.get("resistance_levels") or []
-            if support_levels:
-                computed["support_level"] = support_levels[0]
-            if resistance_levels:
-                computed["resistance_level"] = resistance_levels[0]
-        if realtime_quote:
-            rq = realtime_quote if isinstance(realtime_quote, dict) else (
-                realtime_quote.to_dict() if hasattr(realtime_quote, "to_dict") else {}
-            )
-            if _is_value_placeholder(computed.get("current_price")):
-                computed["current_price"] = rq.get("price")
-
-        filled = False
-        for k in _PRICE_POS_KEYS:
-            if _is_value_placeholder(pp.get(k)) and not _is_value_placeholder(computed.get(k)):
-                pp[k] = computed[k]
-                filled = True
-        if filled:
-            dp["price_position"] = pp
-            logger.info("[price_position] Filled placeholder fields from computed data")
-    except Exception as e:
-        logger.warning("[price_position] Fill failed, skipping: %s", e)
-
-
-def get_stock_name_multi_source(
-    stock_code: str,
-    context: Optional[Dict] = None,
-    data_manager = None
-) -> str:
-    """
-    多来源获取股票中文名称
-
-    获取策略（按优先级）：
-    1. 从传入的 context 中获取（realtime 数据）
-    2. 从静态映射表 STOCK_NAME_MAP 获取
-    3. 从 DataFetcherManager 获取（各数据源）
-    4. 返回默认名称（股票+代码）
-
-    Args:
-        stock_code: 股票代码
-        context: 分析上下文（可选）
-        data_manager: DataFetcherManager 实例（可选）
-
-    Returns:
-        股票中文名称
-    """
-    # 1. 从上下文获取（实时行情数据）
-    if context:
-        # 优先从 stock_name 字段获取
-        if context.get('stock_name'):
-            name = context['stock_name']
-            if name and not name.startswith('股票'):
-                return name
-
-        # 其次从 realtime 数据获取
-        if 'realtime' in context and context['realtime'].get('name'):
-            return context['realtime']['name']
-
-    # 2. 从静态映射表获取
-    if stock_code in STOCK_NAME_MAP:
-        return STOCK_NAME_MAP[stock_code]
-
-    # 3. 从数据源获取
-    if data_manager is None:
-        try:
-            from data_provider.base import DataFetcherManager
-            data_manager = DataFetcherManager()
-        except Exception as e:
-            logger.debug(f"无法初始化 DataFetcherManager: {e}")
-
-    if data_manager:
-        try:
-            name = data_manager.get_stock_name(stock_code)
-            if name:
-                # 更新缓存
-                STOCK_NAME_MAP[stock_code] = name
-                return name
-        except Exception as e:
-            logger.debug(f"从数据源获取股票名称失败: {e}")
-
-    # 4. 返回默认名称
-    return f'股票{stock_code}'
 
 
 @dataclass
@@ -1302,6 +677,9 @@ class GeminiAnalyzer:
 - Strong fundamental or earnings signals must not be automatically collapsed into a conservative `hold/watch` conclusion just because technical signals are weak.
 - `buy` expresses direction only; do not silently turn it into a position-size signal.
 - If fundamentals are weak or missing, be explicit about the data gap instead of overfitting to short-term technicals.
+- A fundamental strength judgment must stay within verifiable, measurable earnings/risk evidence; narrative alone is not enough.
+- If a hard stop-loss/risk-control line is hit, execute it directly and do not reopen the decision with fundamentals or technicals.
+- Technical summary inputs (MA/volume/K-line) may only fine-tune entry timing when the fundamental, risk, and holding-semantic layers are already aligned.
 """
         return base_prompt + """
 
@@ -1311,6 +689,32 @@ class GeminiAnalyzer:
 - `decision_type` 必须保持为 `buy|hold|sell`。
 - 所有面向用户的人类可读文本值必须使用中文。
 """
+
+    def _ensure_ma60_in_ma_analysis(self, ma_analysis: str, today: dict, context: dict) -> str:
+        """Ensure MA60 is explicitly surfaced in the final MA analysis text."""
+        text = ma_analysis or ""
+        if any(k in text for k in ("MA60", "60日", "中期趋势参考线")):
+            return text
+
+        today_data = today if isinstance(today, dict) else {}
+        if not today_data and isinstance(context, dict):
+            today_data = context.get("today", {}) or {}
+
+        ma60 = today_data.get("ma60") if isinstance(today_data, dict) else None
+        close = today_data.get("close") if isinstance(today_data, dict) else None
+        ma20 = today_data.get("ma20") if isinstance(today_data, dict) else None
+        if ma60 is None or close is None:
+            return text
+
+        pos_60 = "上方" if close > ma60 else "下方"
+        if ma20 is not None:
+            pos_20 = "上方" if close > ma20 else "下方"
+            relation = f"MA20在{pos_20}，MA60在{pos_60}"
+        else:
+            relation = f"当前价在MA60{pos_60}"
+
+        fallback = f"MA60：{relation}，中期趋势需重点关注。"
+        return f"{text}\n{fallback}".strip() if text else fallback
 
     def _has_channel_config(self, config: Config) -> bool:
         """Check if multi-channel config (channels / YAML / legacy model_list) is active."""
@@ -1849,37 +1253,20 @@ class GeminiAnalyzer:
                 report_language=report_language,
             )
     
-    def _format_prompt(
-        self, 
-        context: Dict[str, Any], 
-        name: str,
-        news_context: Optional[str] = None,
-        report_language: str = "zh",
+    def _build_data_input_prompt(
+        self,
+        context: Dict[str, Any],
+        stock_name: str,
+        code: str,
+        unknown_text: str,
+        no_data_text: str,
+        report_language: str,
+        use_legacy_default_prompt: bool,
+        news_window_days: Optional[int],
+        today: Dict[str, Any],
+        news_context: Optional[str],
     ) -> str:
-        """
-        格式化分析提示词（决策仪表盘 v2.0）
-        
-        包含：技术指标、实时行情（量比/换手率）、筹码分布、趋势分析、新闻
-        
-        Args:
-            context: 技术面数据上下文（包含增强数据）
-            name: 股票名称（默认值，可能被上下文覆盖）
-            news_context: 预先搜索的新闻内容
-        """
-        code = context.get('code', 'Unknown')
-        report_language = normalize_report_language(report_language)
-        _, _, use_legacy_default_prompt = self._get_skill_prompt_sections()
-        
-        # 优先使用上下文中的股票名称（从 realtime_quote 获取）
-        stock_name = context.get('stock_name', name)
-        if not stock_name or stock_name == f'股票{code}':
-            stock_name = STOCK_NAME_MAP.get(code, f'股票{code}')
-            
-        today = context.get('today', {})
-        unknown_text = get_unknown_text(report_language)
-        no_data_text = get_no_data_text(report_language)
-        
-        # ========== 构建决策仪表盘格式的输入 ==========
+        """构建分析输入侧 prompt（技术、基本面、新闻、缺失数据警告）。"""
         prompt = f"""# 决策仪表盘分析请求
 
 ## 📊 股票基础信息
@@ -1947,6 +1334,12 @@ class GeminiAnalyzer:
 | MA20 | {today.get('ma20', 'N/A')} | 中期参考线 |
 | MA60 | {today.get('ma60', 'N/A')} | 中期趋势参考线 |
 | 均线形态 | {context.get('ma_status', unknown_text)} | 仅作辅助判断 |
+
+### 均线输出硬约束
+- `ma_analysis` 必须显式提到 MA60，不得省略。
+- 至少说明当前价相对 MA60 的位置，以及 MA20 与 MA60 的关系。
+- 不要只写“均线走平”“多头排列”“空头排列”等泛化描述。
+- 如果 MA60 缺失，必须明确写出 `MA60=N/A`。
 """
         
         # 添加实时行情数据（量比、换手率等）
@@ -2273,9 +1666,22 @@ class GeminiAnalyzer:
 请 **忽略上述表格中的 N/A 数据**，重点依据 **【📰 舆情情报】** 中的新闻进行基本面和情绪面分析。
 在回答技术面问题（如均线、乖离率）时，请直接说明“数据缺失，无法判断”，**严禁编造数据**。
 """
+        return prompt
 
-        # 明确的输出要求
-        prompt += f"""
+
+    def _build_output_instruction_prompt(
+        self,
+context: Dict[str, Any],
+        stock_name: str,
+        code: str,
+        unknown_text: str,
+        no_data_text: str,
+        report_language: str,
+        use_legacy_default_prompt: bool,
+        news_window_days: Optional[int],
+    ) -> str:
+        """构建输出格式与约束侧 prompt。"""
+        prompt = f"""
 ---
 
 ## ✅ 分析任务
@@ -2334,6 +1740,82 @@ class GeminiAnalyzer:
 
 请输出完整的 JSON 格式决策仪表盘。"""
 
+        return prompt
+
+
+    def _format_prompt(
+        self, 
+        context: Dict[str, Any], 
+        name: str,
+        news_context: Optional[str] = None,
+        report_language: str = "zh",
+    ) -> str:
+        """
+        格式化分析提示词（决策仪表盘 v2.0）
+        
+        包含：技术指标、实时行情（量比/换手率）、筹码分布、趋势分析、新闻
+        
+        Args:
+            context: 技术面数据上下文（包含增强数据）
+            name: 股票名称（默认值，可能被上下文覆盖）
+            news_context: 预先搜索的新闻内容
+        """
+        code = context.get('code', 'Unknown')
+        report_language = normalize_report_language(report_language)
+        _, _, use_legacy_default_prompt = self._get_skill_prompt_sections()
+        
+        # 优先使用上下文中的股票名称（从 realtime_quote 获取）
+        stock_name = context.get('stock_name', name)
+        if not stock_name or stock_name == f'股票{code}':
+            stock_name = STOCK_NAME_MAP.get(code, f'股票{code}')
+            
+        today = context.get('today', {})
+        unknown_text = get_unknown_text(report_language)
+        no_data_text = get_no_data_text(report_language)
+        
+        # 计算新闻窗口天数
+        news_window_days: Optional[int] = None
+        context_window = context.get("news_window_days")
+        try:
+            if context_window is not None:
+                parsed_window = int(context_window)
+                if parsed_window > 0:
+                    news_window_days = parsed_window
+        except (TypeError, ValueError):
+            news_window_days = None
+
+        if news_window_days is None:
+            prompt_config = self._get_runtime_config()
+            news_window_days = resolve_news_window_days(
+                news_max_age_days=getattr(prompt_config, "news_max_age_days", 3),
+                news_strategy_profile=getattr(prompt_config, "news_strategy_profile", "short"),
+            )
+        
+        # 组装 prompt
+        prompt = self._build_data_input_prompt(
+            context=context,
+            stock_name=stock_name,
+            code=code,
+            unknown_text=unknown_text,
+            no_data_text=no_data_text,
+            report_language=report_language,
+            use_legacy_default_prompt=use_legacy_default_prompt,
+            news_window_days=news_window_days,
+            today=today,
+            news_context=news_context,
+        )
+        prompt += self._build_output_instruction_prompt(
+            context=context,
+            stock_name=stock_name,
+            code=code,
+            unknown_text=unknown_text,
+            no_data_text=no_data_text,
+            report_language=report_language,
+            use_legacy_default_prompt=use_legacy_default_prompt,
+            news_window_days=news_window_days,
+        )
+        
+        # 语言要求
         if report_language == "en":
             prompt += """
 
@@ -2352,11 +1834,12 @@ class GeminiAnalyzer:
 - 所有 JSON 键名必须保持不变，不要翻译键名。
 - `decision_type` 必须保持为 `buy`、`hold`、`sell`。
 - 所有面向用户的人类可读文本值必须使用中文。
-- 当数据缺失时，请使用中文直接说明“{no_data_text}，无法判断”。
+            - 当数据缺失时，请使用中文直接说明“{no_data_text}，无法判断”。
 """
         
         return prompt
     
+
     def _format_volume(self, volume: Optional[float]) -> str:
         """格式化成交量显示"""
         if volume is None:
@@ -2528,6 +2011,8 @@ class GeminiAnalyzer:
             report_language = normalize_report_language(
                 getattr(self._get_runtime_config(), "report_language", "zh")
             )
+            today: Dict[str, Any] = {}
+            context: Dict[str, Any] = {}
             # 清理响应文本：移除 markdown 代码块标记
             cleaned_text = response_text
             if '```json' in cleaned_text:
@@ -2592,7 +2077,11 @@ class GeminiAnalyzer:
                     medium_term_outlook=data.get('medium_term_outlook', ''),
                     # 技术面
                     technical_analysis=data.get('technical_analysis', ''),
-                    ma_analysis=data.get('ma_analysis', ''),
+                    ma_analysis=self._ensure_ma60_in_ma_analysis(
+                        data.get('ma_analysis', ''),
+                        today,
+                        context,
+                    ),
                     volume_analysis=data.get('volume_analysis', ''),
                     pattern_analysis=data.get('pattern_analysis', ''),
                     # 基本面

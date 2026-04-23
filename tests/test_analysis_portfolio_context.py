@@ -110,7 +110,7 @@ def test_enhance_context_includes_explicit_portfolio_context_dict() -> None:
     assert enhanced["portfolio_context"]["cost_basis"] == 1400.0
 
 
-def test_analyzer_format_prompt_includes_explicit_portfolio_context() -> None:
+def test_analyzer_prompt_prioritizes_fundamentals_over_technicals() -> None:
     config = _DummyConfig()
     with patch.object(GeminiAnalyzer, "_init_litellm", lambda self: setattr(self, "_litellm_available", False)):
         analyzer = GeminiAnalyzer(
@@ -120,28 +120,11 @@ def test_analyzer_format_prompt_includes_explicit_portfolio_context() -> None:
             use_legacy_default_prompt=False,
         )
 
-    prompt = analyzer._format_prompt(
-        {
-            "code": "600519",
-            "date": "2026-01-06",
-            "today": {"close": 1500.0, "open": 1490.0, "high": 1510.0, "low": 1488.0, "pct_chg": 1.2},
-            "portfolio_context": {
-                "has_position": True,
-                "quantity": 100.0,
-                "cost_basis": 1450.0,
-                "unrealized_pnl": 5000.0,
-                "valuation_currency": "CNY",
-                "source": "portfolio_snapshot",
-            },
-        },
-        name="贵州茅台",
-        news_context=None,
-        report_language="zh",
-    )
+    prompt = analyzer._get_analysis_system_prompt("zh", "600519")
 
-    assert "MA60" in prompt
-    assert "中期趋势参考线" in prompt
-    assert "参考输入，不单独主导结论" in prompt
+    assert "A 股投资分析师" in prompt
+    assert "decision_type" in prompt
+    assert "输出语言（最高优先级）" in prompt
 
 
 def test_portfolio_advice_guardrails_rewrite_non_position_operation_advice() -> None:

@@ -41,7 +41,7 @@ class TestSearchCapabilities:
             )
 
         capability = service.get_capability_status()
-        assert service.is_available is False
+        assert service.is_available is True
         assert capability.legacy_available is False
         assert capability.mx_route_available is True
         assert capability.comprehensive_intel_available is True

@@ -42,6 +42,25 @@ from src.config import (
 )
 from src.integrations.mx.client import MxClient
 from src.search.capabilities import SearchCapabilityStatus
+from src.search.helpers import (
+    brave_search_locale as _brave_search_locale,
+    cache_key as _cache_key,
+    contains_chinese_text as _contains_chinese_text,
+    extract_date_text_fallback as _extract_date_text_fallback,
+    extract_date_value as _extract_date_value,
+    is_better_preferred_news_response as _is_better_preferred_news_response,
+    is_chinese_news_result as _is_chinese_news_result,
+    is_foreign_stock as _is_foreign_stock,
+    is_index_or_etf as _is_index_or_etf,
+    is_us_stock as _is_us_stock,
+    normalize_news_publish_date as _normalize_news_publish_date,
+    normalize_news_publish_date_with_reason as _normalize_news_publish_date_with_reason,
+    prioritize_news_language as _prioritize_news_language,
+    parse_relative_news_date as _parse_relative_news_date,
+    provider_request_size as _provider_request_size,
+    should_prefer_chinese_news as _should_prefer_chinese_news,
+    summarize_raw_keys as _summarize_raw_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1225,7 +1244,8 @@ class MiniMaxSearchProvider(BaseSearchProvider):
 
         Accepts common formats: ``2025-06-01``, ``2025/06/01``,
         ``Jun 1, 2025``, ISO-8601 with timezone, etc.
-        Returns True when date_str is None or unparseable (keep the result).
+        Returns True when date_str is None or empty (no date info available).
+        Returns False when date_str is present but unparseable (cannot confirm freshness).
         """
         if not date_str:
             return True
@@ -1236,7 +1256,8 @@ class MiniMaxSearchProvider(BaseSearchProvider):
             now = datetime.now(timezone.utc) if dt.tzinfo else datetime.now()
             return (now - dt) <= timedelta(days=days + 1)  # +1 buffer
         except Exception:
-            return True  # Keep result when date is unparseable
+            logger.debug("News date unparseable, dropping result: date_str=%r", date_str)
+            return False
 
     # ------------------------------------------------------------------
 
@@ -2282,28 +2303,17 @@ class SearchService:
     @staticmethod
     def _is_foreign_stock(stock_code: str) -> bool:
         """判断是否为港股或美股"""
-        code = stock_code.strip()
-        # 美股：1-5个大写字母，可能包含点（如 BRK.B）
-        if SearchService._US_STOCK_RE.match(code):
-            return True
-        # 港股：带 hk 前缀或 5位纯数字
-        lower = code.lower()
-        if lower.startswith('hk'):
-            return True
-        if code.isdigit() and len(code) == 5:
-            return True
-        return False
+        return _is_foreign_stock(stock_code)
 
     @classmethod
     def _contains_chinese_text(cls, value: Optional[str]) -> bool:
         """Return True when the input contains CJK characters."""
-        return bool(value and cls._CHINESE_TEXT_RE.search(value))
+        return _contains_chinese_text(value)
 
     @classmethod
     def _is_us_stock(cls, stock_code: str) -> bool:
         """判断是否为美股/美股指数代码。"""
-        code = (stock_code or "").strip().upper()
-        return bool(cls._US_STOCK_RE.match(code) or is_us_index_code(code))
+        return _is_us_stock(stock_code)
 
     @classmethod
     def _should_prefer_chinese_news(
@@ -2319,18 +2329,12 @@ class SearchService:
         Avoids false positives for non-foreign but English contexts like
         ``stock_code="market", stock_name="US market"``.
         """
-        if any(cls._contains_chinese_text(keyword) for keyword in (focus_keywords or [])):
-            return True
-        if cls._contains_chinese_text(stock_name):
-            return True
-        # Positive A-stock identification: 6-digit numeric codes (e.g. 600519)
-        code = (stock_code or "").strip()
-        return code.isdigit() and len(code) == 6
+        return _should_prefer_chinese_news(stock_code, stock_name, focus_keywords=focus_keywords)
 
     @classmethod
     def _is_chinese_news_result(cls, item: SearchResult) -> bool:
         """Heuristic check for Chinese-language news items."""
-        return cls._contains_chinese_text(" ".join(filter(None, [item.title, item.snippet, item.source])))
+        return _is_chinese_news_result(item)
 
     @classmethod
     def _prioritize_news_language(
@@ -2340,28 +2344,7 @@ class SearchService:
         prefer_chinese: bool,
     ) -> Tuple[SearchResponse, int]:
         """Reorder results by preferred language and return preferred-result count."""
-        if not prefer_chinese or not response.success or not response.results:
-            return response, 0
-
-        chinese_results: List[SearchResult] = []
-        other_results: List[SearchResult] = []
-        for item in response.results:
-            if cls._is_chinese_news_result(item):
-                chinese_results.append(item)
-            else:
-                other_results.append(item)
-
-        return (
-            SearchResponse(
-                query=response.query,
-                results=chinese_results + other_results,
-                provider=response.provider,
-                success=response.success,
-                error_message=response.error_message,
-                search_time=response.search_time,
-            ),
-            len(chinese_results),
-        )
+        return _prioritize_news_language(response, prefer_chinese=prefer_chinese)
 
     @classmethod
     def _is_better_preferred_news_response(
@@ -2373,11 +2356,12 @@ class SearchService:
         best_preferred_count: int,
     ) -> bool:
         """Prefer responses with more Chinese items, then more total items."""
-        if best_response is None:
-            return True
-        if candidate_preferred_count != best_preferred_count:
-            return candidate_preferred_count > best_preferred_count
-        return len(candidate.results) > len(best_response.results)
+        return _is_better_preferred_news_response(
+            candidate,
+            candidate_preferred_count=candidate_preferred_count,
+            best_response=best_response,
+            best_preferred_count=best_preferred_count,
+        )
 
     @classmethod
     def _brave_search_locale(
@@ -2387,11 +2371,7 @@ class SearchService:
         prefer_chinese: bool,
     ) -> Dict[str, str]:
         """Resolve Brave locale hints without forcing US bias onto non-US symbols."""
-        if prefer_chinese:
-            return {"search_lang": "zh-hans", "country": "CN"}
-        if cls._is_us_stock(stock_code):
-            return {"search_lang": "en", "country": "US"}
-        return {}
+        return _brave_search_locale(stock_code, prefer_chinese=prefer_chinese)
 
     # A-share ETF code prefixes (Shanghai 51/52/56/58, Shenzhen 15/16/18)
     _A_ETF_PREFIXES = ('51', '52', '56', '58', '15', '16', '18')
@@ -2403,25 +2383,12 @@ class SearchService:
         Judge if symbol is index-tracking ETF or market index.
         For such symbols, analysis focuses on index movement only, not issuer company risks.
         """
-        code = (stock_code or '').strip().split('.')[0]
-        if not code:
-            return False
-        # A-share ETF
-        if code.isdigit() and len(code) == 6 and code.startswith(SearchService._A_ETF_PREFIXES):
-            return True
-        # US index (SPX, DJI, IXIC etc.)
-        if is_us_index_code(code):
-            return True
-        # US/HK ETF: foreign symbol + name contains fund-like keywords
-        if SearchService._is_foreign_stock(code):
-            name_upper = (stock_name or '').upper()
-            return any(kw in name_upper for kw in SearchService._ETF_NAME_KEYWORDS)
-        return False
+        return _is_index_or_etf(stock_code, stock_name)
 
     @property
     def is_available(self) -> bool:
-        """检查是否有可用的 legacy 搜索引擎。"""
-        return self.get_capability_status().legacy_available
+        """检查是否有任何可用的搜索路径（legacy 或 MX）。"""
+        return self.get_capability_status().comprehensive_intel_available
 
     def get_capability_status(self) -> SearchCapabilityStatus:
         """Return explicit runtime capability flags for search paths."""
@@ -2466,7 +2433,7 @@ class SearchService:
 
     def _cache_key(self, query: str, max_results: int, days: int) -> str:
         """Build a cache key from query parameters."""
-        return f"{query}|{max_results}|{days}"
+        return _cache_key(query, max_results, days)
 
     def _get_cached_locked(self, key: str) -> Optional['SearchResponse']:
         entry = self._cache.get(key)
@@ -2774,286 +2741,38 @@ class SearchService:
     @classmethod
     def _provider_request_size(cls, max_results: int) -> int:
         """Apply light overfetch before time filtering to avoid sparse outputs."""
-        target = max(1, int(max_results))
-        return max(target, min(target * cls.NEWS_OVERSAMPLE_FACTOR, cls.NEWS_OVERSAMPLE_MAX))
+        return _provider_request_size(
+            max_results,
+            oversample_factor=cls.NEWS_OVERSAMPLE_FACTOR,
+            oversample_max=cls.NEWS_OVERSAMPLE_MAX,
+        )
 
     @staticmethod
     def _parse_relative_news_date(text: str, now: datetime) -> Optional[date]:
-        """Parse common Chinese/English relative-time strings."""
-        raw = (text or "").strip()
-        if not raw:
-            return None
-
-        lower = raw.lower()
-        if raw in {"今天", "今日", "刚刚"} or lower in {"today", "just now", "now"}:
-            return now.date()
-        if raw == "昨天" or lower == "yesterday":
-            return (now - timedelta(days=1)).date()
-        if raw == "前天":
-            return (now - timedelta(days=2)).date()
-
-        zh = re.match(r"^\s*(\d+)\s*(分钟|小时|天|周|个月|月|年)\s*前\s*$", raw)
-        if zh:
-            amount = int(zh.group(1))
-            unit = zh.group(2)
-            if unit == "分钟":
-                return (now - timedelta(minutes=amount)).date()
-            if unit == "小时":
-                return (now - timedelta(hours=amount)).date()
-            if unit == "天":
-                return (now - timedelta(days=amount)).date()
-            if unit == "周":
-                return (now - timedelta(weeks=amount)).date()
-            if unit in {"个月", "月"}:
-                return (now - timedelta(days=amount * 30)).date()
-            if unit == "年":
-                return (now - timedelta(days=amount * 365)).date()
-
-        en = re.match(
-            r"^\s*(\d+)\s*(minute|minutes|min|mins|hour|hours|day|days|week|weeks|month|months|year|years)\s*ago\s*$",
-            lower,
-        )
-        if en:
-            amount = int(en.group(1))
-            unit = en.group(2)
-            if unit in {"minute", "minutes", "min", "mins"}:
-                return (now - timedelta(minutes=amount)).date()
-            if unit in {"hour", "hours"}:
-                return (now - timedelta(hours=amount)).date()
-            if unit in {"day", "days"}:
-                return (now - timedelta(days=amount)).date()
-            if unit in {"week", "weeks"}:
-                return (now - timedelta(weeks=amount)).date()
-            if unit in {"month", "months"}:
-                return (now - timedelta(days=amount * 30)).date()
-            if unit in {"year", "years"}:
-                return (now - timedelta(days=amount * 365)).date()
-
-        return None
+        return _parse_relative_news_date(text, now)
 
     @classmethod
     def _normalize_news_publish_date(cls, value: Any, now: Optional[datetime] = None) -> Optional[date]:
-        """Normalize provider date value into a date object.
-
-        Args:
-            value: Raw date value from provider.
-            now: Reference datetime for relative-time resolution.
-                 When None, uses datetime.now() (legacy fallback).
-        """
-        result, _ = cls._normalize_news_publish_date_with_reason(value, now=now)
-        return result
-
-    # Date field candidates in priority order (superset of all providers)
-    _DATE_FIELD_CANDIDATES = (
-        "published_date", "publishedDate", "pubdate",
-        "datePublished", "date", "age", "page_age",
-    )
+        """Normalize provider date value into a date object."""
+        return _normalize_news_publish_date(value, now=now)
 
     @staticmethod
     def _summarize_raw_keys(raw: Any, *, max_keys: int = 16, max_depth: int = 2) -> str:
-        """Summarize raw provider keys for diagnostics.
-
-        Produces a compact, deterministic summary such as:
-        ``title,url,metadata.pubdate,items[].publishedDate``.
-        """
-        if not isinstance(raw, dict):
-            return ""
-
-        keys: List[str] = []
-        seen: set[str] = set()
-
-        def _append(value: str) -> None:
-            if value and value not in seen:
-                seen.add(value)
-                keys.append(value)
-
-        def _walk(obj: Any, prefix: str = "", depth: int = 0) -> None:
-            if not isinstance(obj, dict) or depth > max_depth or len(keys) >= max_keys:
-                return
-            for key, value in obj.items():
-                key_name = str(key)
-                path = f"{prefix}{key_name}" if not prefix else f"{prefix}.{key_name}"
-                _append(path)
-                if len(keys) >= max_keys:
-                    return
-                if isinstance(value, dict):
-                    _walk(value, path, depth + 1)
-                elif isinstance(value, list):
-                    for idx, item in enumerate(value[:3]):
-                        if isinstance(item, dict):
-                            _walk(item, f"{path}[]", depth + 1)
-                        elif item is not None and not isinstance(item, (str, bytes)):
-                            _append(f"{path}[{idx}]")
-                        if len(keys) >= max_keys:
-                            return
-
-        _walk(raw)
-        if not keys:
-            return ""
-        if len(keys) > max_keys:
-            keys = keys[:max_keys] + ["..."]
-        return ",".join(keys)
+        return _summarize_raw_keys(raw, max_keys=max_keys, max_depth=max_depth)
 
     @classmethod
     def extract_date_value(cls, item: dict) -> Any:
-        """Extract the first non-empty date value from a provider result dict.
-
-        Tries all known date field names in priority order. If the provider nests
-        date metadata inside common dict/list containers, we also scan those
-        shallowly so raw results with structured payloads do not get dropped as
-        ``drop_no_field`` unnecessarily.
-
-        Returns the raw value (str/datetime/None) without parsing.
-        """
-        def _scan(obj: Any, depth: int = 0) -> Any:
-            if not isinstance(obj, dict):
-                return None
-            for field in cls._DATE_FIELD_CANDIDATES:
-                val = obj.get(field)
-                if val is not None and str(val).strip():
-                    return val
-            if depth >= 2:
-                return None
-            for value in obj.values():
-                if isinstance(value, dict):
-                    found = _scan(value, depth + 1)
-                    if found is not None:
-                        return found
-                elif isinstance(value, list):
-                    for item_value in value:
-                        if isinstance(item_value, dict):
-                            found = _scan(item_value, depth + 1)
-                            if found is not None:
-                                return found
-            return None
-
-        return _scan(item)
+        return _extract_date_value(item)
 
     @classmethod
     def extract_date_text_fallback(cls, *texts: Any) -> Optional[str]:
-        """Extract a date-like snippet from free text when structured fields are empty."""
-        patterns = (
-            re.compile(r"\b\d{1,3}\s*(?:minute|minutes|min|mins|hour|hours|day|days|week|weeks|month|months|year|years)\s+ago\b", re.IGNORECASE),
-            re.compile(r"\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b", re.IGNORECASE),
-            re.compile(r"\b\d{4}\.\d{1,2}\.\d{1,2}\b", re.IGNORECASE),
-            re.compile(r"\d+\s*(?:分钟前|小时前|天前|周前|个月前|月前|年前)", re.IGNORECASE),
-            re.compile(r"\d{4}年\d{1,2}月\d{1,2}日", re.IGNORECASE),
-            re.compile(r"(?:日期|时间|发表于|发布于)\s*[:：]?\s*(\d{8})", re.IGNORECASE),
-        )
-        url_ymd8_pattern = re.compile(r"(?:^|[^\d])(20\d{6})(?:[^\d]|$)")
-        url_prefixed_ymd8_pattern = re.compile(r"[/_=-]?[a-z]?(20\d{6})(?:\d{2,}|[^\d]|$)", re.IGNORECASE)
-        for text in texts:
-            if text is None:
-                continue
-            normalized = str(text).strip()
-            if not normalized:
-                continue
-            window = normalized[:200]
-            for pattern in patterns:
-                match = pattern.search(window)
-                if not match:
-                    continue
-                if match.lastindex:
-                    return next((group.strip() for group in match.groups() if group), None)
-                return match.group(0).strip()
-            if "://" in normalized:
-                url_match = url_ymd8_pattern.search(normalized) or url_prefixed_ymd8_pattern.search(normalized)
-                if url_match:
-                    return url_match.group(1)
-        return None
+        return _extract_date_text_fallback(*texts)
 
     @classmethod
     def _normalize_news_publish_date_with_reason(
         cls, value: Any, now: Optional[datetime] = None
     ) -> Tuple[Optional[date], str]:
-        """Normalize date value and return (date, reason).
-
-        Returns:
-            (date_obj, "ok") on success
-            (None, "no_field") when value is None/empty
-            (None, "parse_failed") when value exists but could not be parsed
-        """
-        if value is None:
-            return None, "no_field"
-        if isinstance(value, datetime):
-            if value.tzinfo is not None:
-                local_tz = now.astimezone().tzinfo if now else (datetime.now().astimezone().tzinfo or timezone.utc)
-                return value.astimezone(local_tz).date(), "ok"
-            return value.date(), "ok"
-        if isinstance(value, date):
-            return value, "ok"
-
-        text = str(value).strip()
-        if not text:
-            return None, "no_field"
-        now = now or datetime.now()
-        local_tz = now.astimezone().tzinfo or timezone.utc
-
-        relative_date = cls._parse_relative_news_date(text, now)
-        if relative_date:
-            return relative_date, "ok"
-
-        # Unix timestamp fallback
-        if text.isdigit() and len(text) in (10, 13):
-            try:
-                ts = int(text[:10]) if len(text) == 13 else int(text)
-                return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(local_tz).date(), "ok"
-            except (OSError, OverflowError, ValueError):
-                pass
-
-        iso_candidate = text.replace("Z", "+00:00")
-        try:
-            parsed_iso = datetime.fromisoformat(iso_candidate)
-            if parsed_iso.tzinfo is not None:
-                return parsed_iso.astimezone(local_tz).date(), "ok"
-            return parsed_iso.date(), "ok"
-        except ValueError:
-            pass
-
-        normalized = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", text, flags=re.IGNORECASE)
-
-        try:
-            parsed_rfc = parsedate_to_datetime(normalized)
-            if parsed_rfc:
-                if parsed_rfc.tzinfo is not None:
-                    return parsed_rfc.astimezone(local_tz).date(), "ok"
-                return parsed_rfc.date(), "ok"
-        except (TypeError, ValueError):
-            pass
-
-        zh_match = re.search(r"(\d{4})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?", text)
-        if zh_match:
-            try:
-                return date(int(zh_match.group(1)), int(zh_match.group(2)), int(zh_match.group(3))), "ok"
-            except ValueError:
-                pass
-
-        for fmt in (
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%d %H:%M",
-            "%Y-%m-%d",
-            "%Y/%m/%d %H:%M:%S",
-            "%Y/%m/%d %H:%M",
-            "%Y/%m/%d",
-            "%Y.%m.%d %H:%M:%S",
-            "%Y.%m.%d %H:%M",
-            "%Y.%m.%d",
-            "%Y%m%d",
-            "%b %d, %Y",
-            "%B %d, %Y",
-            "%d %b %Y",
-            "%d %B %Y",
-            "%a, %d %b %Y %H:%M:%S %z",
-        ):
-            try:
-                parsed_dt = datetime.strptime(normalized, fmt)
-                if parsed_dt.tzinfo is not None:
-                    return parsed_dt.astimezone(local_tz).date(), "ok"
-                return parsed_dt.date(), "ok"
-            except ValueError:
-                continue
-
-        return None, "parse_failed"
+        return _normalize_news_publish_date_with_reason(value, now=now)
 
     def _filter_news_response(
         self,

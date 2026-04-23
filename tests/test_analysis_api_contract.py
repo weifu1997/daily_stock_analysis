@@ -468,6 +468,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             report_type="detailed",
             force_refresh=False,
             notify=True,
+            owner_id=None,
         )
 
     def test_trigger_analysis_accepts_hk_suffix_code_from_autocomplete(self) -> None:
@@ -503,6 +504,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             report_type="detailed",
             force_refresh=False,
             notify=True,
+            owner_id=None,
         )
 
     def test_trigger_analysis_accepts_hk_prefixed_code(self) -> None:
@@ -538,6 +540,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             report_type="detailed",
             force_refresh=False,
             notify=True,
+            owner_id=None,
         )
 
     def test_trigger_analysis_allows_stock_names_with_star_and_hyphen(self) -> None:
@@ -573,6 +576,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             report_type="detailed",
             force_refresh=False,
             notify=True,
+            owner_id=None,
         )
 
     def test_trigger_analysis_accepts_resolvable_free_text_input(self) -> None:
@@ -608,6 +612,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             report_type="detailed",
             force_refresh=False,
             notify=True,
+            owner_id=None,
         )
 
     def test_trigger_analysis_preserves_batch_metadata(self) -> None:
@@ -642,6 +647,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             report_type="detailed",
             force_refresh=False,
             notify=True,
+            owner_id=None,
         )
 
     def test_trigger_analysis_rejects_cross_request_duplicate_for_equivalent_code_shapes(self) -> None:
@@ -732,6 +738,7 @@ class AnalysisApiContractTestCase(unittest.TestCase):
             report_type="detailed",
             force_refresh=False,
             notify=True,
+            owner_id=None,
         )
 
     def test_spa_fallback_returns_json_404_for_bare_api_path(self) -> None:

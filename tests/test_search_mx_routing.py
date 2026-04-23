@@ -58,7 +58,7 @@ class TestMxSearchRouting(unittest.TestCase):
 
         capability = service.get_capability_status()
         self.assertIsInstance(capability, SearchCapabilityStatus)
-        self.assertFalse(service.is_available)
+        self.assertTrue(service.is_available)
         self.assertFalse(capability.legacy_available)
         self.assertTrue(capability.mx_route_available)
         self.assertTrue(capability.comprehensive_intel_available)

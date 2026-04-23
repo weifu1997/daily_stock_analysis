@@ -192,7 +192,14 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                     content={"error": "not_found", "message": f"API endpoint /{full_path} not found"}
                 )
             
-            file_path = static_dir / full_path
+            # 防御路径穿越：确保解析后的路径仍在 static_dir 范围内
+            try:
+                file_path = (static_dir / full_path).resolve()
+                if not file_path.is_relative_to(static_dir.resolve()):
+                    return FileResponse(static_dir / "index.html")
+            except (ValueError, OSError):
+                return FileResponse(static_dir / "index.html")
+            
             if file_path.exists() and file_path.is_file():
                 # Issue #520: Explicitly resolve MIME type to avoid
                 # browsers rejecting JS modules served as text/plain.

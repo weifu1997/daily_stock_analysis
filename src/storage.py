@@ -807,7 +807,12 @@ class DatabaseManager:
         def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
             cursor = dbapi_connection.cursor()
             try:
-                cursor.execute(f"PRAGMA busy_timeout={int(self._sqlite_busy_timeout_ms)}")
+                # SQLite PRAGMA 不支持参数化占位符；先校验数值范围再拼接
+                timeout_ms = int(self._sqlite_busy_timeout_ms)
+                if not (0 <= timeout_ms <= 300000):
+                    timeout_ms = 5000
+                    logger.warning("SQLite busy_timeout 超出安全范围，已回退到 5000ms")
+                cursor.execute(f"PRAGMA busy_timeout={timeout_ms}")
                 if self._sqlite_file_db and self._sqlite_wal_enabled:
                     cursor.execute("PRAGMA journal_mode=WAL")
             except Exception as exc:

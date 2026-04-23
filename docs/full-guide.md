@@ -94,6 +94,8 @@ daily_stock_analysis/
 | `REPORT_TYPE` | 报告类型：`simple`(精简)、`full`(完整)、`brief`(3-5句概括)，Docker环境推荐设为 `full` | 可选 |
 | `REPORT_LANGUAGE` | 报告输出语言：`zh`(默认中文) / `en`(英文)；会同步影响 Prompt、模板、通知 fallback 与 Web 报告页固定文案 | 可选 |
 | `REPORT_SUMMARY_ONLY` | 仅分析结果摘要：设为 `true` 时只推送汇总，不含个股详情；多股时适合快速浏览（默认 false，Issue #262） | 可选 |
+| `REPORT_DECISION_CONTEXT` | 报告决策结构上下文（运行时内部使用）：交易结构、失效条件、观察项、数据质量等；默认由 pipeline 自动构造并通过 `extra_context` 传递，不需要手动配置 | 内部 |
+| `REPORT_QUALITY_MAP` | 报告质量上下文（运行时内部使用）：report_reliability / fallback_used / has_real_chip / has_valid_news / has_market_snapshot；默认由 pipeline 自动构造并通过 `extra_context` 传递，不需要手动配置 | 内部 |
 | `REPORT_TEMPLATES_DIR` | Jinja2 模板目录（相对项目根，默认 `templates`） | 可选 |
 | `REPORT_RENDERER_ENABLED` | 启用 Jinja2 模板渲染（默认 `false`，保证零回归） | 可选 |
 | `REPORT_INTEGRITY_ENABLED` | 启用报告完整性校验，缺失必填字段时重试或占位补全（默认 `true`） | 可选 |

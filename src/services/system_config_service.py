@@ -205,18 +205,51 @@ class SystemConfigService:
             "issues": issues,
         }
 
-    def export_desktop_env(self) -> Dict[str, Any]:
-        """Return the raw active `.env` content for desktop-only backup."""
+    def export_desktop_env(self, mask_token: str = "******") -> Dict[str, Any]:
+        """Return the active `.env` content with sensitive values masked."""
         if self._manager.env_path.exists():
             content = self._manager.env_path.read_text(encoding="utf-8")
         else:
             content = ""
 
+        masked_content = self._mask_sensitive_env_content(content, mask_token=mask_token)
         return {
-            "content": content,
+            "content": masked_content,
             "config_version": self._manager.get_config_version(),
             "updated_at": self._manager.get_updated_at(),
         }
+
+    @staticmethod
+    def _mask_sensitive_env_content(content: str, mask_token: str = "******") -> str:
+        """Mask values for keys that are marked sensitive or look sensitive."""
+        lines: List[str] = []
+        for raw_line in content.splitlines(keepends=True):
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                lines.append(raw_line)
+                continue
+
+            key_part, sep, _ = stripped.partition("=")
+            key_upper = key_part.strip().upper()
+            field_def = get_field_definition(key_upper, "")
+            is_sensitive = bool(field_def.get("is_sensitive", False))
+            if not is_sensitive:
+                is_sensitive = SystemConfigService._is_heuristic_sensitive_key(key_upper)
+
+            if is_sensitive:
+                lines.append(f"{key_part.strip()}{sep}{mask_token}\n")
+            else:
+                lines.append(raw_line)
+
+        return "".join(lines)
+
+    @staticmethod
+    def _is_heuristic_sensitive_key(key: str) -> bool:
+        """Fallback detection for unregistered keys that look sensitive."""
+        return any(pattern in key for pattern in (
+            "API_KEY", "API_KEYS", "SECRET", "TOKEN", "PASSWORD",
+            "PRIVATE_KEY", "ACCESS_KEY", "APP_KEY", "AUTH_KEY",
+        ))
 
     def import_desktop_env(
         self,

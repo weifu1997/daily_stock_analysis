@@ -68,12 +68,51 @@
 {% endfor %}
 {% endif %}
 
+{% set decision_context = (report_decision_map or {}).get(result.code) if report_decision_map else None %}
 {% set pos_advice = core.get('position_advice', {}) %}
+{% set sniper = battle.get('sniper_points', {}) %}
+{% set action_checklist = battle.get('action_checklist', []) %}
+{% set risk_alerts = (intel.get('risk_alerts') or []) %}
+{% set observation_item = (decision_context.get('observation_item') if decision_context else None) or (action_checklist[0] if action_checklist else (core.get('time_sensitivity', labels.default_time_sensitivity))) %}
+{% set direction_text = (decision_context.get('direction') if decision_context else None) or result.trend_prediction %}
+{% set action_text = (decision_context.get('action') if decision_context else None) or result.operation_advice %}
+{% set risk_text = (decision_context.get('risk_summary') if decision_context else None) or ((risk_alerts[:2] | join('；')) if risk_alerts else (result.risk_warning or 'N/A')) %}
+{% set stop_text = (decision_context.get('invalidation_condition') if decision_context else None) or (sniper.get('stop_loss', core.get('one_sentence', result.analysis_summary)) if sniper else core.get('one_sentence', result.analysis_summary)) %}
+{% if pos_advice or sniper or risk_alerts or action_checklist or report_quality or decision_context %}
+### 🧭 {{ '交易结构' if report_language != 'en' else 'Trade Structure' }}
+
+| {{ '项目' if report_language != 'en' else 'Item' }} | {{ '内容' if report_language != 'en' else 'Content' }} |
+|---------|------|
+| {{ '方向' if report_language != 'en' else 'Direction' }} | {{ localize_trend_prediction(direction_text, report_language) }} |
+| {{ '动作' if report_language != 'en' else 'Action' }} | {{ localize_operation_advice(action_text, report_language) }} |
+| {{ '风险' if report_language != 'en' else 'Risk' }} | {{ risk_text }} |
+| {{ '观察' if report_language != 'en' else 'Watch' }} | {{ observation_item }} |
+| {{ '失效/止损' if report_language != 'en' else 'Invalidation / Stop' }} | {{ stop_text }} |
+{% endif %}
+
 {% if pos_advice %}
 | {{ labels.position_status_label }} | {{ labels.action_advice_label }} |
 |---------|---------|
 | 🆕 **{{ labels.no_position_label }}** | {{ pos_advice.get('no_position', localize_operation_advice(result.operation_advice, report_language)) }} |
 | 💼 **{{ labels.has_position_label }}** | {{ pos_advice.get('has_position', labels.continue_holding) }} |
+{% endif %}
+
+{% set portfolio_context = (portfolio_contexts or {}).get(result.code) if portfolio_contexts else None %}
+{% if portfolio_context and portfolio_context.get('has_position') %}
+**📌 持仓快照**: {% if portfolio_context.get('quantity') is not none %}数量 {{ portfolio_context.get('quantity') }}{% endif %}{% if portfolio_context.get('cost_basis') is not none %} | 成本 {{ portfolio_context.get('cost_basis') }}{% endif %}{% if portfolio_context.get('unrealized_pnl') is not none %} | 浮盈亏 {{ portfolio_context.get('unrealized_pnl') }}{% endif %}{% if portfolio_context.get('valuation_currency') %} | 币种 {{ portfolio_context.get('valuation_currency') }}{% endif %}
+{% endif %}
+
+{% set report_quality = (report_quality_map or {}).get(result.code) if report_quality_map else None %}
+{% if report_quality %}
+### 🧪 {{ '数据质量' if report_language != 'en' else 'Data Quality' }}
+
+| {{ '指标' if report_language != 'en' else 'Metric' }} | {{ '值' if report_language != 'en' else 'Value' }} |
+|---------|------|
+| {{ '报告可信度' if report_language != 'en' else 'Report Reliability' }} | {{ report_quality.get('report_reliability', 'N/A') }} |
+| {{ '真实筹码' if report_language != 'en' else 'Real Chip' }} | {{ '✅' if report_quality.get('has_real_chip') else '❌' }} |
+| {{ '新闻可用' if report_language != 'en' else 'Valid News' }} | {{ '✅' if report_quality.get('has_valid_news') else '❌' }} |
+| {{ '市场快照' if report_language != 'en' else 'Market Snapshot' }} | {{ '✅' if report_quality.get('has_market_snapshot') else '❌' }} |
+| {{ 'Fallback 介入' if report_language != 'en' else 'Fallback Used' }} | {{ '✅' if report_quality.get('fallback_used') else '❌' }} |
 {% endif %}
 
 {{ market_snapshot(result) }}

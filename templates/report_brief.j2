@@ -6,7 +6,12 @@
 {% set dash = e.result.dashboard or {} %}
 {% set core = (dash.get('core_conclusion') or {}) if dash else {} %}
 {% set one = (core.get('one_sentence') or e.result.analysis_summary or '')[:60] %}
+{% set portfolio_context = (portfolio_contexts or {}).get(e.result.code) if portfolio_contexts else None %}
+{% set report_quality = (report_quality_map or {}).get(e.result.code) if report_quality_map else None %}
+{% set decision_context = (report_decision_map or {}).get(e.result.code) if report_decision_map else None %}
 **{{ e.stock_name }}({{ e.result.code }})** {{ e.signal_emoji }} {{ e.localized_operation_advice }} | {{ labels.score_label }} {{ e.result.sentiment_score }} | {{ one }}
+{% if decision_context %}↳ {{ '动作' if report_language != 'en' else 'Action' }}: {{ localize_operation_advice(decision_context.get('action', e.result.operation_advice), report_language) }} | {{ '失效' if report_language != 'en' else 'Invalidation' }}: {{ decision_context.get('invalidation_condition', 'N/A') }}{% endif %}
+{% if report_quality %}↳ {{ '可信度' if report_language != 'en' else 'Reliability' }}: {{ report_quality.get('report_reliability', 'N/A') }}{% endif %}{% if portfolio_context and portfolio_context.get('has_position') %} | {{ '持仓数量' if report_language != 'en' else 'Qty' }} {{ portfolio_context.get('quantity', 'N/A') }}{% endif %}
 {% endfor %}
 
 *{{ report_timestamp }}*

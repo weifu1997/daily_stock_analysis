@@ -71,6 +71,7 @@ class TaskInfo:
     completed_at: Optional[datetime] = None
     original_query: Optional[str] = None
     selection_source: Optional[str] = None
+    owner_id: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert task info into an API-friendly dictionary."""
@@ -88,6 +89,7 @@ class TaskInfo:
             "error": self.error,
             "original_query": self.original_query,
             "selection_source": self.selection_source,
+            "owner_id": self.owner_id,
         }
     
     def copy(self) -> 'TaskInfo':
@@ -107,6 +109,7 @@ class TaskInfo:
             completed_at=self.completed_at,
             original_query=self.original_query,
             selection_source=self.selection_source,
+            owner_id=self.owner_id,
         )
 
 
@@ -343,6 +346,7 @@ class AnalysisTaskQueue:
         report_type: str = "detailed",
         force_refresh: bool = False,
         notify: bool = True,
+        owner_id: Optional[str] = None,
     ) -> Tuple[List[TaskInfo], List[DuplicateTaskError]]:
         """
         Submit analysis tasks in batch.
@@ -379,6 +383,7 @@ class AnalysisTaskQueue:
                     report_type=report_type,
                     original_query=original_query,
                     selection_source=selection_source,
+                    owner_id=owner_id,
                 )
                 self._tasks[task_id] = task_info
                 self._analyzing_stocks[dedupe_key] = task_id
@@ -450,12 +455,13 @@ class AnalysisTaskQueue:
                 if task.status in (TaskStatus.PENDING, TaskStatus.PROCESSING)
             ]
     
-    def list_all_tasks(self, limit: int = 50) -> List[TaskInfo]:
+    def list_all_tasks(self, limit: int = 50, owner_id: Optional[str] = None) -> List[TaskInfo]:
         """
         获取所有任务（按创建时间倒序）
         
         Args:
             limit: 返回数量限制
+            owner_id: 可选的 owner 过滤
             
         Returns:
             任务列表（副本）
@@ -466,6 +472,8 @@ class AnalysisTaskQueue:
                 key=lambda t: t.created_at,
                 reverse=True
             )
+            if owner_id is not None:
+                tasks = [t for t in tasks if t.owner_id == owner_id]
             return [t.copy() for t in tasks[:limit]]
     
     def get_task_stats(self) -> Dict[str, int]:

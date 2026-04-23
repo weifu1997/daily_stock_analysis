@@ -236,7 +236,8 @@ class StockTrendAnalyzer:
         result.ma5 = float(latest['MA5'])
         result.ma10 = float(latest['MA10'])
         result.ma20 = float(latest['MA20'])
-        result.ma60 = float(latest.get('MA60', 0))
+        _ma60_raw = latest.get('MA60')
+        result.ma60 = float(_ma60_raw) if _ma60_raw is not None and not pd.isna(_ma60_raw) else 0.0
 
         # 1. 趋势判断
         self._analyze_trend(df, result)
@@ -270,7 +271,8 @@ class StockTrendAnalyzer:
         if len(df) >= 60:
             df['MA60'] = df['close'].rolling(window=60).mean()
         else:
-            df['MA60'] = df['MA20']  # 数据不足时使用 MA20 替代
+            logger.warning("数据不足 60 条，MA60 标记为缺失（NaN），不采用 MA20 估算替代")
+            df['MA60'] = np.nan
         return df
 
     def _calculate_macd(self, df: pd.DataFrame) -> pd.DataFrame:

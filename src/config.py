@@ -847,6 +847,229 @@ class Config:
             cls._instance = cls._load_from_env()
         return cls._instance
     
+
+    @classmethod
+    def _load_proxy_settings(cls) -> None:
+        """Configure HTTP/HTTPS/NO_PROXY from env, with domestic domain exclusion."""
+        http_proxy = os.getenv('HTTP_PROXY') or os.getenv('http_proxy')
+        if not http_proxy:
+            return
+        domestic_domains = [
+            'eastmoney.com', 'sina.com.cn', '163.com', 'tushare.pro',
+            'baostock.com', 'sse.com.cn', 'szse.cn', 'csindex.com.cn',
+            'cninfo.com.cn', 'localhost', '127.0.0.1'
+        ]
+        current_no_proxy = os.getenv('NO_PROXY') or os.getenv('no_proxy') or ''
+        existing_domains = current_no_proxy.split(',') if current_no_proxy else []
+        final_domains = list(set(existing_domains + domestic_domains))
+        final_no_proxy = ','.join(filter(None, final_domains))
+        os.environ['NO_PROXY'] = final_no_proxy
+        os.environ['no_proxy'] = final_no_proxy
+        os.environ['HTTP_PROXY'] = http_proxy
+        os.environ['http_proxy'] = http_proxy
+        https_proxy = os.getenv('HTTPS_PROXY') or os.getenv('https_proxy')
+        if https_proxy:
+            os.environ['HTTPS_PROXY'] = https_proxy
+            os.environ['https_proxy'] = https_proxy
+
+    @classmethod
+    def _load_stock_config(cls) -> list:
+        """Parse STOCK_LIST from env, fallback to defaults."""
+        stock_list_str = cls._resolve_env_value('STOCK_LIST', default='', prefer_env_file=True)
+        stock_list = [
+            (c or "").strip().upper()
+            for c in stock_list_str.split(',')
+            if (c or "").strip()
+        ]
+        if not stock_list:
+            stock_list = ['600519', '000001', '300750']
+        return stock_list
+
+    @classmethod
+    def _load_llm_api_keys(cls) -> dict:
+        """Parse multi-key and single-key LLM API configs."""
+        _gemini_keys_raw = os.getenv('GEMINI_API_KEYS', '')
+        gemini_api_keys = [k.strip() for k in _gemini_keys_raw.split(',') if k.strip()]
+        _single_gemini = os.getenv('GEMINI_API_KEY', '').strip()
+        if not gemini_api_keys and _single_gemini:
+            gemini_api_keys = [_single_gemini]
+
+        _anthropic_keys_raw = os.getenv('ANTHROPIC_API_KEYS', '')
+        anthropic_api_keys = [k.strip() for k in _anthropic_keys_raw.split(',') if k.strip()]
+        _single_anthropic = os.getenv('ANTHROPIC_API_KEY', '').strip()
+        if not anthropic_api_keys and _single_anthropic:
+            anthropic_api_keys = [_single_anthropic]
+
+        _openai_keys_raw = os.getenv('OPENAI_API_KEYS', '')
+        openai_api_keys = [k.strip() for k in _openai_keys_raw.split(',') if k.strip()]
+        if not openai_api_keys:
+            _aihubmix = os.getenv('AIHUBMIX_KEY', '').strip()
+            _single_openai = os.getenv('OPENAI_API_KEY', '').strip()
+            _fallback_key = _aihubmix or _single_openai
+            if _fallback_key:
+                openai_api_keys = [_fallback_key]
+
+        _deepseek_keys_raw = os.getenv('DEEPSEEK_API_KEYS', '')
+        deepseek_api_keys = [k.strip() for k in _deepseek_keys_raw.split(',') if k.strip()]
+        if not deepseek_api_keys:
+            _single_deepseek = os.getenv('DEEPSEEK_API_KEY', '').strip()
+            if _single_deepseek:
+                deepseek_api_keys = [_single_deepseek]
+
+        return {
+            "gemini": gemini_api_keys,
+            "anthropic": anthropic_api_keys,
+            "openai": openai_api_keys,
+            "deepseek": deepseek_api_keys,
+        }
+
+    @classmethod
+    def _load_llm_model_config(cls, api_keys: dict) -> tuple:
+        """Resolve LITELLM_MODEL and fallback models from env and available keys."""
+        litellm_model = os.getenv('LITELLM_MODEL', '').strip()
+        if not litellm_model:
+            _gemini_model_name = os.getenv('GEMINI_MODEL', 'gemini-3-flash-preview').strip()
+            _anthropic_model_name = os.getenv('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022').strip()
+            _openai_model_name = os.getenv('OPENAI_MODEL', 'gpt-4o-mini').strip()
+            if api_keys.get("gemini"):
+                litellm_model = f'gemini/{_gemini_model_name}'
+            elif api_keys.get("anthropic"):
+                litellm_model = f'anthropic/{_anthropic_model_name}'
+            elif api_keys.get("deepseek"):
+                litellm_model = 'deepseek/deepseek-chat'
+            elif api_keys.get("openai"):
+                if '/' not in _openai_model_name:
+                    litellm_model = f'openai/{_openai_model_name}'
+                else:
+                    litellm_model = _openai_model_name
+
+        _fallback_str = os.getenv('LITELLM_FALLBACK_MODELS', '')
+        if _fallback_str.strip():
+            litellm_fallback_models = [m.strip() for m in _fallback_str.split(',') if m.strip()]
+        else:
+            _gemini_fallback = os.getenv('GEMINI_MODEL_FALLBACK', 'gemini-2.5-flash').strip()
+            if litellm_model.startswith('gemini/') and _gemini_fallback:
+                _fb = f'gemini/{_gemini_fallback}' if '/' not in _gemini_fallback else _gemini_fallback
+                litellm_fallback_models = [_fb]
+            else:
+                litellm_fallback_models = []
+
+        return litellm_model, litellm_fallback_models
+
+    @classmethod
+    def _load_llm_channels_and_yaml(
+        cls,
+        api_keys: dict,
+        litellm_model: str,
+        litellm_fallback_models: list,
+    ) -> tuple:
+        """Resolve LLM config: YAML > Channels > Legacy. Returns updated model/fallback."""
+        litellm_config_path = os.getenv('LITELLM_CONFIG', '').strip() or None
+        llm_models_source = "legacy_env"
+        llm_channels = []
+        llm_model_list = []
+
+        if litellm_config_path:
+            llm_model_list = cls._parse_litellm_yaml(litellm_config_path)
+            if llm_model_list:
+                llm_models_source = "litellm_config"
+
+        if not llm_model_list:
+            _channels_str = os.getenv('LLM_CHANNELS', '').strip()
+            if _channels_str:
+                llm_channels = cls._parse_llm_channels(_channels_str)
+                llm_model_list = cls._channels_to_model_list(llm_channels)
+                if llm_model_list:
+                    llm_models_source = "llm_channels"
+
+        if not llm_model_list:
+            llm_model_list = cls._legacy_keys_to_model_list(
+                api_keys.get("gemini", []),
+                api_keys.get("anthropic", []),
+                api_keys.get("openai", []),
+                os.getenv('OPENAI_BASE_URL') or (
+                    'https://aihubmix.com/v1' if os.getenv('AIHUBMIX_KEY') else None
+                ),
+                api_keys.get("deepseek", []),
+            )
+            if llm_model_list:
+                llm_models_source = "legacy_env"
+
+        if not litellm_model and llm_channels:
+            for _ch in llm_channels:
+                if _ch.get('models'):
+                    litellm_model = _ch['models'][0]
+                    break
+
+        if not litellm_fallback_models and llm_channels and litellm_model:
+            _all_ch_models = []
+            for _ch in llm_channels:
+                _all_ch_models.extend(_ch.get('models', []))
+            _seen = {litellm_model}
+            litellm_fallback_models = [
+                m for m in _all_ch_models
+                if m not in _seen and not _seen.add(m)
+            ]
+
+        return (
+            litellm_config_path,
+            litellm_model,
+            litellm_fallback_models,
+            llm_channels,
+            llm_model_list,
+            llm_models_source,
+        )
+
+    @classmethod
+    def _load_search_api_keys(cls) -> dict:
+        """Parse search provider API keys."""
+        return {
+            "bocha": [k.strip() for k in os.getenv('BOCHA_API_KEYS', '').split(',') if k.strip()],
+            "minimax": [k.strip() for k in os.getenv('MINIMAX_API_KEYS', '').split(',') if k.strip()],
+            "tavily": [k.strip() for k in os.getenv('TAVILY_API_KEYS', '').split(',') if k.strip()],
+            "serpapi": [k.strip() for k in os.getenv('SERPAPI_API_KEYS', '').split(',') if k.strip()],
+            "brave": [k.strip() for k in os.getenv('BRAVE_API_KEYS', '').split(',') if k.strip()],
+        }
+
+    @classmethod
+    def _load_wechat_config(cls) -> tuple:
+        """Resolve WeChat message type and max bytes."""
+        wechat_msg_type = os.getenv('WECHAT_MSG_TYPE', 'markdown')
+        wechat_msg_type_lower = wechat_msg_type.lower()
+        wechat_max_bytes_env = os.getenv('WECHAT_MAX_BYTES')
+        if wechat_max_bytes_env not in (None, ''):
+            wechat_max_bytes = parse_env_int(
+                wechat_max_bytes_env,
+                2048 if wechat_msg_type_lower == 'text' else 4000,
+                field_name='WECHAT_MAX_BYTES',
+                minimum=1,
+            )
+        else:
+            wechat_max_bytes = 2048 if wechat_msg_type_lower == 'text' else 4000
+        return wechat_msg_type_lower, wechat_max_bytes
+
+    @classmethod
+    def _load_schedule_config(cls) -> tuple:
+        """Resolve RUN_IMMEDIATELY, SCHEDULE_RUN_IMMEDIATELY, SCHEDULE_TIME."""
+        legacy_run_immediately_env = cls._resolve_env_value('RUN_IMMEDIATELY', prefer_env_file=True)
+        legacy_run_immediately = (
+            legacy_run_immediately_env.lower() == 'true'
+            if legacy_run_immediately_env is not None
+            else True
+        )
+
+        schedule_run_immediately_env = cls._resolve_env_value(
+            'SCHEDULE_RUN_IMMEDIATELY', prefer_env_file=True
+        )
+        schedule_run_immediately = (
+            schedule_run_immediately_env.lower() == 'true'
+            if schedule_run_immediately_env is not None
+            else legacy_run_immediately
+        )
+        schedule_time_value = cls._resolve_env_value(
+            'SCHEDULE_TIME', default='18:00', prefer_env_file=True
+        )
+        return legacy_run_immediately, schedule_run_immediately, schedule_time_value or '18:00'
     @classmethod
     def _load_from_env(cls) -> 'Config':
         """
@@ -863,201 +1086,41 @@ class Config:
         # 确保环境变量已加载
         setup_env()
 
-        # === 智能代理配置 (关键修复) ===
-        # 如果配置了代理，自动设置 NO_PROXY 以排除国内数据源，避免行情获取失败
-        http_proxy = os.getenv('HTTP_PROXY') or os.getenv('http_proxy')
-        if http_proxy:
-            # 国内金融数据源域名列表
-            domestic_domains = [
-                'eastmoney.com',   # 东方财富 (Efinance/Akshare)
-                'sina.com.cn',     # 新浪财经 (Akshare)
-                '163.com',         # 网易财经 (Akshare)
-                'tushare.pro',     # Tushare
-                'baostock.com',    # Baostock
-                'sse.com.cn',      # 上交所
-                'szse.cn',         # 深交所
-                'csindex.com.cn',  # 中证指数
-                'cninfo.com.cn',   # 巨潮资讯
-                'localhost',
-                '127.0.0.1'
-            ]
+        # === 智能代理配置 ===
+        cls._load_proxy_settings()
 
-            # 获取现有的 no_proxy
-            current_no_proxy = os.getenv('NO_PROXY') or os.getenv('no_proxy') or ''
-            existing_domains = current_no_proxy.split(',') if current_no_proxy else []
+        # === 自选股配置 ===
+        stock_list = cls._load_stock_config()
 
-            # 合并去重
-            final_domains = list(set(existing_domains + domestic_domains))
-            final_no_proxy = ','.join(filter(None, final_domains))
+        # === LLM API Keys ===
+        llm_api_keys = cls._load_llm_api_keys()
 
-            # 设置环境变量 (requests/urllib3/aiohttp 都会遵守此设置)
-            os.environ['NO_PROXY'] = final_no_proxy
-            os.environ['no_proxy'] = final_no_proxy
+        # === LLM Model + Fallback ===
+        litellm_model, litellm_fallback_models = cls._load_llm_model_config(llm_api_keys)
 
-            # 确保 HTTP_PROXY 也被正确设置（以防仅在 .env 中定义但未导出）
-            os.environ['HTTP_PROXY'] = http_proxy
-            os.environ['http_proxy'] = http_proxy
-
-            # HTTPS_PROXY 同理
-            https_proxy = os.getenv('HTTPS_PROXY') or os.getenv('https_proxy')
-            if https_proxy:
-                os.environ['HTTPS_PROXY'] = https_proxy
-                os.environ['https_proxy'] = https_proxy
-
-        
-        # 解析自选股列表（逗号分隔，统一为大写 Issue #355）
-        stock_list_str = cls._resolve_env_value(
-            'STOCK_LIST',
-            default='',
-            prefer_env_file=True,
+        # === LLM Channels / YAML / Legacy ===
+        (
+            litellm_config_path,
+            litellm_model,
+            litellm_fallback_models,
+            llm_channels,
+            llm_model_list,
+            llm_models_source,
+        ) = cls._load_llm_channels_and_yaml(
+            llm_api_keys,
+            litellm_model,
+            litellm_fallback_models,
         )
-        stock_list = [
-            (c or "").strip().upper()
-            for c in stock_list_str.split(',')
-            if (c or "").strip()
-        ]
-        
-        # 如果没有配置，使用默认的示例股票
-        if not stock_list:
-            stock_list = ['600519', '000001', '300750']
-        
-        # === LiteLLM multi-key parsing ===
-        # GEMINI_API_KEYS (comma-separated) > GEMINI_API_KEY (single)
-        _gemini_keys_raw = os.getenv('GEMINI_API_KEYS', '')
-        gemini_api_keys = [k.strip() for k in _gemini_keys_raw.split(',') if k.strip()]
-        _single_gemini = os.getenv('GEMINI_API_KEY', '').strip()
-        if not gemini_api_keys and _single_gemini:
-            gemini_api_keys = [_single_gemini]
-
-        # ANTHROPIC_API_KEYS > ANTHROPIC_API_KEY
-        _anthropic_keys_raw = os.getenv('ANTHROPIC_API_KEYS', '')
-        anthropic_api_keys = [k.strip() for k in _anthropic_keys_raw.split(',') if k.strip()]
-        _single_anthropic = os.getenv('ANTHROPIC_API_KEY', '').strip()
-        if not anthropic_api_keys and _single_anthropic:
-            anthropic_api_keys = [_single_anthropic]
-
-        # OPENAI_API_KEYS > AIHUBMIX_KEY > OPENAI_API_KEY
-        _openai_keys_raw = os.getenv('OPENAI_API_KEYS', '')
-        openai_api_keys = [k.strip() for k in _openai_keys_raw.split(',') if k.strip()]
-        if not openai_api_keys:
-            _aihubmix = os.getenv('AIHUBMIX_KEY', '').strip()
-            _single_openai = os.getenv('OPENAI_API_KEY', '').strip()
-            _fallback_key = _aihubmix or _single_openai
-            if _fallback_key:
-                openai_api_keys = [_fallback_key]
-
-        # DEEPSEEK_API_KEYS > DEEPSEEK_API_KEY (independent from OpenAI-compatible layer)
-        _deepseek_keys_raw = os.getenv('DEEPSEEK_API_KEYS', '')
-        deepseek_api_keys = [k.strip() for k in _deepseek_keys_raw.split(',') if k.strip()]
-        if not deepseek_api_keys:
-            _single_deepseek = os.getenv('DEEPSEEK_API_KEY', '').strip()
-            if _single_deepseek:
-                deepseek_api_keys = [_single_deepseek]
-
-        # LITELLM_MODEL: explicit config takes precedence; else infer from available keys
-        litellm_model = os.getenv('LITELLM_MODEL', '').strip()
-        if not litellm_model:
-            _gemini_model_name = os.getenv('GEMINI_MODEL', 'gemini-3-flash-preview').strip()
-            _anthropic_model_name = os.getenv('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022').strip()
-            _openai_model_name = os.getenv('OPENAI_MODEL', 'gpt-4o-mini').strip()
-            if gemini_api_keys:
-                litellm_model = f'gemini/{_gemini_model_name}'
-            elif anthropic_api_keys:
-                litellm_model = f'anthropic/{_anthropic_model_name}'
-            elif deepseek_api_keys:
-                litellm_model = 'deepseek/deepseek-chat'
-            elif openai_api_keys:
-                # For openai-compatible models, add prefix only if not already prefixed
-                if '/' not in _openai_model_name:
-                    litellm_model = f'openai/{_openai_model_name}'
-                else:
-                    litellm_model = _openai_model_name
-
-        # LITELLM_FALLBACK_MODELS: comma-separated list of fallback models
-        _fallback_str = os.getenv('LITELLM_FALLBACK_MODELS', '')
-        if _fallback_str.strip():
-            litellm_fallback_models = [m.strip() for m in _fallback_str.split(',') if m.strip()]
-        else:
-            # Backward compat: use gemini_model_fallback when primary is gemini
-            _gemini_fallback = os.getenv('GEMINI_MODEL_FALLBACK', 'gemini-2.5-flash').strip()
-            if litellm_model.startswith('gemini/') and _gemini_fallback:
-                _fb = f'gemini/{_gemini_fallback}' if '/' not in _gemini_fallback else _gemini_fallback
-                litellm_fallback_models = [_fb]
-            else:
-                litellm_fallback_models = []
-
-        # === LLM Channels + YAML config ===
-        litellm_config_path = os.getenv('LITELLM_CONFIG', '').strip() or None
-        llm_models_source = "legacy_env"
-        llm_channels: List[Dict[str, Any]] = []
-        llm_model_list: List[Dict[str, Any]] = []
-
-        # Priority 1: LITELLM_CONFIG (standard LiteLLM YAML config file)
-        if litellm_config_path:
-            llm_model_list = cls._parse_litellm_yaml(litellm_config_path)
-            if llm_model_list:
-                llm_models_source = "litellm_config"
-
-        # Priority 2: LLM_CHANNELS (env var based channel config)
-        if not llm_model_list:
-            _channels_str = os.getenv('LLM_CHANNELS', '').strip()
-            if _channels_str:
-                llm_channels = cls._parse_llm_channels(_channels_str)
-                llm_model_list = cls._channels_to_model_list(llm_channels)
-                if llm_model_list:
-                    llm_models_source = "llm_channels"
-
-        # Priority 3: Legacy env vars → auto-build model_list (backward compatible)
-        if not llm_model_list:
-            llm_model_list = cls._legacy_keys_to_model_list(
-                gemini_api_keys, anthropic_api_keys, openai_api_keys,
-                os.getenv('OPENAI_BASE_URL') or (
-                    'https://aihubmix.com/v1' if os.getenv('AIHUBMIX_KEY') else None
-                ),
-                deepseek_api_keys,
-            )
-            if llm_model_list:
-                llm_models_source = "legacy_env"
-
-        # Auto-infer LITELLM_MODEL from channels when not explicitly set
-        if not litellm_model and llm_channels:
-            for _ch in llm_channels:
-                if _ch.get('models'):
-                    litellm_model = _ch['models'][0]
-                    break
-
-        # Auto-infer LITELLM_FALLBACK_MODELS from channels when not explicitly set
-        if not litellm_fallback_models and llm_channels and litellm_model:
-            _all_ch_models: List[str] = []
-            for _ch in llm_channels:
-                _all_ch_models.extend(_ch.get('models', []))
-            _seen = {litellm_model}
-            litellm_fallback_models = [
-                m for m in _all_ch_models
-                if m not in _seen and not _seen.add(m)  # type: ignore[func-returns-value]
-            ]
 
         agent_litellm_model = normalize_agent_litellm_model(
             os.getenv('AGENT_LITELLM_MODEL', ''),
             configured_models=set(get_configured_llm_models(llm_model_list)),
         )
 
-        # 解析搜索引擎 API Keys（支持多个 key，逗号分隔）
-        bocha_keys_str = os.getenv('BOCHA_API_KEYS', '')
-        bocha_api_keys = [k.strip() for k in bocha_keys_str.split(',') if k.strip()]
+        # === 搜索配置 ===
+        search_api_keys = cls._load_search_api_keys()
 
-        minimax_keys_str = os.getenv('MINIMAX_API_KEYS', '')
-        minimax_api_keys = [k.strip() for k in minimax_keys_str.split(',') if k.strip()]
-        
-        tavily_keys_str = os.getenv('TAVILY_API_KEYS', '')
-        tavily_api_keys = [k.strip() for k in tavily_keys_str.split(',') if k.strip()]
-        
-        serpapi_keys_str = os.getenv('SERPAPI_API_KEYS', '')
-        serpapi_keys = [k.strip() for k in serpapi_keys_str.split(',') if k.strip()]
-
-        brave_keys_str = os.getenv('BRAVE_API_KEYS', '')
-        brave_api_keys = [k.strip() for k in brave_keys_str.split(',') if k.strip()]
-
+        # === SearXNG URLs ===
         _raw_urls = [u.strip() for u in os.getenv('SEARXNG_BASE_URLS', '').split(',') if u.strip()]
         searxng_base_urls = []
         invalid_searxng_urls = []
@@ -1077,52 +1140,16 @@ class Config:
             default=True,
         )
 
-        # 企微消息类型与最大字节数逻辑
-        wechat_msg_type = os.getenv('WECHAT_MSG_TYPE', 'markdown')
-        wechat_msg_type_lower = wechat_msg_type.lower()
-        wechat_max_bytes_env = os.getenv('WECHAT_MAX_BYTES')
-        if wechat_max_bytes_env not in (None, ''):
-            wechat_max_bytes = parse_env_int(
-                wechat_max_bytes_env,
-                2048 if wechat_msg_type_lower == 'text' else 4000,
-                field_name='WECHAT_MAX_BYTES',
-                minimum=1,
-            )
-        else:
-            # 未显式配置时，根据消息类型选择默认字节数
-            wechat_max_bytes = 2048 if wechat_msg_type_lower == 'text' else 4000
+        # === 企微配置 ===
+        wechat_msg_type_lower, wechat_max_bytes = cls._load_wechat_config()
 
-        # Preserve historical semantics for startup flags: only an explicit
-        # literal "true" enables immediate execution; empty strings stay False.
-        legacy_run_immediately_env = cls._resolve_env_value(
-            'RUN_IMMEDIATELY',
-            prefer_env_file=True,
-        )
-        legacy_run_immediately = (
-            legacy_run_immediately_env.lower() == 'true'
-            if legacy_run_immediately_env is not None
-            else True
-        )
+        # === 调度配置 ===
+        legacy_run_immediately, schedule_run_immediately, schedule_time_value = cls._load_schedule_config()
 
-        schedule_run_immediately_env = cls._resolve_env_value(
-            'SCHEDULE_RUN_IMMEDIATELY',
-            prefer_env_file=True,
-        )
-        schedule_run_immediately = (
-            schedule_run_immediately_env.lower() == 'true'
-            if schedule_run_immediately_env is not None
-            else legacy_run_immediately
-        )
-        schedule_time_value = cls._resolve_env_value(
-            'SCHEDULE_TIME',
-            default='18:00',
-            prefer_env_file=True,
-        )
-
+        # === 语言配置 ===
         report_language_raw = cls._resolve_report_language_env_value(
             preexisting_report_language
         )
-        
         return cls(
             stock_list=stock_list,
             feishu_app_id=os.getenv('FEISHU_APP_ID'),
@@ -1145,10 +1172,10 @@ class Config:
             llm_models_source=llm_models_source,
             llm_channels=llm_channels,
             llm_model_list=llm_model_list,
-            gemini_api_keys=gemini_api_keys,
-            anthropic_api_keys=anthropic_api_keys,
-            openai_api_keys=openai_api_keys,
-            deepseek_api_keys=deepseek_api_keys,
+            gemini_api_keys=llm_api_keys.get("gemini", []),
+            anthropic_api_keys=llm_api_keys.get("anthropic", []),
+            openai_api_keys=llm_api_keys.get("openai", []),
+            deepseek_api_keys=llm_api_keys.get("deepseek", []),
             gemini_api_key=os.getenv('GEMINI_API_KEY'),
             gemini_model=os.getenv('GEMINI_MODEL', 'gemini-3-flash-preview'),
             gemini_model_fallback=os.getenv('GEMINI_MODEL_FALLBACK', 'gemini-2.5-flash'),
@@ -1180,11 +1207,11 @@ class Config:
                 or ""
             ),
             vision_provider_priority=os.getenv('VISION_PROVIDER_PRIORITY', 'gemini,anthropic,openai'),
-            bocha_api_keys=bocha_api_keys,
-            minimax_api_keys=minimax_api_keys,
-            tavily_api_keys=tavily_api_keys,
-            brave_api_keys=brave_api_keys,
-            serpapi_keys=serpapi_keys,
+            bocha_api_keys=search_api_keys.get("bocha", []),
+            minimax_api_keys=search_api_keys.get("minimax", []),
+            tavily_api_keys=search_api_keys.get("tavily", []),
+            brave_api_keys=search_api_keys.get("brave", []),
+            serpapi_keys=search_api_keys.get("serpapi", []),
             searxng_base_urls=searxng_base_urls,
             searxng_public_instances_enabled=searxng_public_instances_enabled,
             social_sentiment_api_key=os.getenv('SOCIAL_SENTIMENT_API_KEY') or None,

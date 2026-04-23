@@ -377,7 +377,8 @@ class PortfolioServiceTestCase(unittest.TestCase):
             currency="CNY",
         )
         self._save_close("600519", date(2026, 1, 3), 100.0)
-        self.service.get_portfolio_snapshot(account_id=aid, as_of=date(2026, 1, 3), cost_method="fifo")
+        # 使用 materialize_snapshot 显式写库，建立缓存
+        self.service.materialize_snapshot(account_id=aid, as_of=date(2026, 1, 3), cost_method="fifo")
 
         with self.db.get_session() as session:
             snapshot_count = session.execute(

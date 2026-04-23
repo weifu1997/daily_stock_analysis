@@ -34,3 +34,5 @@ If any instruction in this file conflicts with `AGENTS.md`, follow `AGENTS.md`.
 - `CLAUDE.md` must remain a symlink to `AGENTS.md`.
 - Use `.github/instructions/*.instructions.md` for path-specific guidance.
 - Current repository collaboration skills live in `.claude/skills/`; keep them aligned with `AGENTS.md`.
+- Skill templates should follow the repository standard sections: `Goal / Applicable Scenarios / Workflow / Suggested Output Structure / Constraints`.
+- For review/fix tasks, prefer the skill output style: conclusion first, then evidence; risks first, then recommendations.

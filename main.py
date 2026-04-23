@@ -21,15 +21,43 @@ A股自选股智能分析系统 - 主调度程序
 - 效率优先：关注筹码集中度好的股票
 - 买点偏好：缩量回踩 MA5/MA10 支撑
 """
+import argparse
+import logging
 import os
+import sys
+import time
+import uuid
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 from dotenv import dotenv_values
-from src.config import setup_env
 
-_INITIAL_PROCESS_ENV = dict(os.environ)
+from data_provider.base import canonical_stock_code
+from src.bootstrap import runtime_env as _runtime_env
+from src.bootstrap.runtime_logging import setup_bootstrap_logging
+from src.config import Config, get_config, setup_env
+from src.integrations.mx.moni_client import MxMoniClient
+from src.logging_config import setup_logging
+from src.runtime.execution_report import ExecutionReport
+from src.runtime.main_dispatch import (
+    normalize_service_mode_args as _normalize_service_mode_args,
+    prepare_startup_stock_codes as _prepare_startup_stock_codes,
+    run_backtest_mode as _run_backtest_mode,
+    run_market_review_mode as _run_market_review_mode,
+    run_moni_execute_mode as _run_moni_execute_mode,
+    run_schedule_mode as _run_schedule_mode,
+    run_serve_only_mode as _run_serve_only_mode,
+    run_single_analysis_mode as _run_single_analysis_mode,
+    start_service_runtime as _start_service_runtime,
+)
+from src.services.moni_plan_service import save_plan
+from src.services.mx_name_cache import cache_stock_name
+from src.webui_frontend import prepare_webui_frontend_assets
+
+_INITIAL_PROCESS_ENV = _runtime_env.get_initial_process_env()
 setup_env()
+_runtime_env.bootstrap_runtime_environment()
 
 # 代理配置 - 通过 USE_PROXY 环境变量控制，默认关闭
 # GitHub Actions 环境自动跳过代理配置
@@ -40,23 +68,6 @@ if os.getenv("GITHUB_ACTIONS") != "true" and os.getenv("USE_PROXY", "false").low
     proxy_url = f"http://{proxy_host}:{proxy_port}"
     os.environ["http_proxy"] = proxy_url
     os.environ["https_proxy"] = proxy_url
-
-import argparse
-import logging
-import sys
-import time
-import uuid
-from datetime import datetime, timezone, timedelta
-from typing import List, Tuple
-
-from data_provider.base import canonical_stock_code
-from src.services.mx_name_cache import cache_stock_name
-from src.services.moni_plan_service import save_plan
-from src.integrations.mx.moni_client import MxMoniClient
-from src.webui_frontend import prepare_webui_frontend_assets
-from src.config import get_config, Config
-from src.logging_config import setup_logging
-from src.runtime.execution_report import ExecutionReport
 
 
 logger = logging.getLogger(__name__)
@@ -103,6 +114,7 @@ _RUNTIME_ENV_FILE_KEYS = {
     key for key in _ACTIVE_ENV_FILE_VALUES
     if key not in _INITIAL_PROCESS_ENV
 }
+_runtime_env.set_runtime_env_keys(_RUNTIME_ENV_FILE_KEYS)
 
 # setup_env() already ran at import time above.
 _env_bootstrapped = True
@@ -118,40 +130,12 @@ def _bootstrap_environment() -> None:
     if _env_bootstrapped:
         return
 
-    from src.config import setup_env
-
-    setup_env()
-
-    if os.getenv("GITHUB_ACTIONS") != "true" and os.getenv("USE_PROXY", "false").lower() == "true":
-        proxy_host = os.getenv("PROXY_HOST", "127.0.0.1")
-        proxy_port = os.getenv("PROXY_PORT", "10809")
-        proxy_url = f"http://{proxy_host}:{proxy_port}"
-        os.environ["http_proxy"] = proxy_url
-        os.environ["https_proxy"] = proxy_url
-
+    _runtime_env.bootstrap_runtime_environment()
     _env_bootstrapped = True
 
 
 def _setup_bootstrap_logging(debug: bool = False) -> None:
-    """Initialize stderr-only logging before config is loaded.
-
-    File handlers are deferred until ``config.log_dir`` is known (via the
-    subsequent ``setup_logging()`` call) so that healthy runs never create
-    log files in a hard-coded directory.
-    """
-    level = logging.DEBUG if debug else logging.INFO
-    root = logging.getLogger()
-    root.setLevel(level)
-    if not any(
-        isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) is sys.stderr
-        for h in root.handlers
-    ):
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setLevel(level)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        )
-        root.addHandler(handler)
+    return setup_bootstrap_logging(debug=debug)
 
 
 def _get_stock_analysis_pipeline():
@@ -201,18 +185,20 @@ def _reload_env_file_values_preserving_overrides() -> None:
     if latest_values is None:
         return
 
-    managed_keys = {
-        key for key in latest_values
-        if key not in _INITIAL_PROCESS_ENV
-    }
+    managed_keys = set(latest_values)
+
+    # Keep process-level overrides stable even when .env contains stale values.
+    for key in managed_keys:
+        if key in _INITIAL_PROCESS_ENV:
+            os.environ[key] = os.getenv(key, _INITIAL_PROCESS_ENV[key])
+        else:
+            os.environ[key] = latest_values[key]
 
     for key in _RUNTIME_ENV_FILE_KEYS - managed_keys:
-        os.environ.pop(key, None)
+        if key not in _INITIAL_PROCESS_ENV:
+            os.environ.pop(key, None)
 
-    for key in managed_keys:
-        os.environ[key] = latest_values[key]
-
-    _RUNTIME_ENV_FILE_KEYS = managed_keys
+    _RUNTIME_ENV_FILE_KEYS = {key for key in managed_keys if key not in _INITIAL_PROCESS_ENV}
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -641,15 +627,18 @@ def run_full_analysis(
                 moni_client = MxMoniClient(apikey=mx_apikey)
                 try:
                     account_info = moni_client.query_account()
-                except Exception:
+                except Exception as exc:
+                    logger.warning('mx-moni 账户查询失败: %s', exc)
                     account_info = {}
                 try:
                     position_info = moni_client.query_positions()
-                except Exception:
+                except Exception as exc:
+                    logger.warning('mx-moni 持仓查询失败: %s', exc)
                     position_info = {}
                 try:
                     order_info = moni_client.query_orders()
-                except Exception:
+                except Exception as exc:
+                    logger.warning('mx-moni 委托查询失败: %s', exc)
                     order_info = {}
                 pos_count = len(position_info.get('data', [])) if isinstance(position_info, dict) else 0
                 order_count = len(order_info.get('data', [])) if isinstance(order_info, dict) else 0
@@ -1071,6 +1060,8 @@ def _build_schedule_time_provider(default_schedule_time: str):
     return _provider
 
 
+
+
 def _enforce_script_entry() -> None:
     """Enforce script/tmux entry for the formal project.
 
@@ -1134,229 +1125,31 @@ def main() -> int:
     for warning in warnings:
         logger.warning(warning)
 
-    # 解析股票列表（统一为大写 Issue #355）
-    stock_codes = None
-    if args.stocks:
-        stock_codes = [canonical_stock_code(c) for c in args.stocks.split(',') if (c or "").strip()]
-        logger.info(f"使用命令行指定的股票列表: {stock_codes}")
-    elif getattr(args, 'mx_query', None) or getattr(args, 'mx_profile', None):
-        logger.warning('方案A已启用：生产主链妙想预选只认 .env / 持久化配置，忽略 CLI 的 --mx-query/--mx-profile')
-        stock_codes = _resolve_mx_preselect_stock_codes(config)
-        if stock_codes:
-            logger.info(f"使用妙想预选池股票列表: {stock_codes}")
-            # 妙想预选池已经提供了可追溯的股票名称缓存，后续名称解析应尽量命中缓存。
-    elif getattr(args, 'mx_preselect', False) or getattr(config, 'mx_preselect_priority', False) or getattr(config, 'mx_preselect_query', None) or getattr(config, 'mx_preselect_profile', None):
-        stock_codes = _resolve_mx_preselect_stock_codes(config)
-        if stock_codes:
-            logger.info(f"使用妙想预选池股票列表: {stock_codes}")
-            # 妙想预选池已经提供了可追溯的股票名称缓存，后续名称解析应尽量命中缓存。
+    stock_codes = _prepare_startup_stock_codes(args, config)
+    start_serve = _normalize_service_mode_args(args, config)
+    _start_service_runtime(args, config, start_serve)
 
-    portfolio_stock_codes = _resolve_portfolio_stock_codes()
-    if portfolio_stock_codes:
-        stock_codes = _merge_stock_code_pools(stock_codes, portfolio_stock_codes)
-        logger.info(f"每日分析合并持仓后股票列表: {stock_codes}")
-
-    # === 处理 --webui / --webui-only 参数，映射到 --serve / --serve-only ===
-    if args.webui:
-        args.serve = True
-    if args.webui_only:
-        args.serve_only = True
-
-    # 兼容旧版 WEBUI_ENABLED 环境变量
-    if config.webui_enabled and not (args.serve or args.serve_only):
-        args.serve = True
-
-    # === 启动 Web 服务 (如果启用) ===
-    start_serve = (args.serve or args.serve_only) and os.getenv("GITHUB_ACTIONS") != "true"
-
-    # 兼容旧版 WEBUI_HOST/WEBUI_PORT：如果用户未通过 --host/--port 指定，则使用旧变量
-    if start_serve:
-        if args.host == '0.0.0.0' and os.getenv('WEBUI_HOST'):
-            args.host = os.getenv('WEBUI_HOST')
-        if args.port == 8000 and os.getenv('WEBUI_PORT'):
-            args.port = int(os.getenv('WEBUI_PORT'))
-
-    bot_clients_started = False
-    if start_serve:
-        if not prepare_webui_frontend_assets():
-            logger.warning("前端静态资源未就绪，继续启动 FastAPI 服务（Web 页面可能不可用）")
-        try:
-            start_api_server(host=args.host, port=args.port, config=config)
-            bot_clients_started = True
-        except Exception as e:
-            logger.error(f"启动 FastAPI 服务失败: {e}")
-
-    if bot_clients_started:
-        start_bot_stream_clients(config)
-
-    # === 仅 Web 服务模式：不自动执行分析 ===
     if args.serve_only:
-        logger.info("模式: 仅 Web 服务")
-        logger.info(f"Web 服务运行中: http://{args.host}:{args.port}")
-        logger.info("通过 /api/v1/analysis/analyze 接口触发分析")
-        logger.info(f"API 文档: http://{args.host}:{args.port}/docs")
-        logger.info("按 Ctrl+C 退出...")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("\n用户中断，程序退出")
-        return 0
+        return _run_serve_only_mode(args)
 
     try:
-        # 模式0: 回测
-        if getattr(args, 'backtest', False):
-            logger.info("模式: 回测")
-            from src.services.backtest_service import BacktestService
-
-            service = BacktestService()
-            stats = service.run_backtest(
-                code=getattr(args, 'backtest_code', None),
-                force=getattr(args, 'backtest_force', False),
-                eval_window_days=getattr(args, 'backtest_days', None),
-            )
-            logger.info(
-                f"回测完成: processed={stats.get('processed')} saved={stats.get('saved')} "
-                f"completed={stats.get('completed')} insufficient={stats.get('insufficient')} errors={stats.get('errors')}"
-            )
+        if _run_backtest_mode(args):
+            return 0
+        if _run_moni_execute_mode(args):
+            return 0
+        if _run_market_review_mode(args, config):
+            return 0
+        if _run_schedule_mode(
+            args,
+            config,
+            stock_codes,
+            _reload_runtime_config,
+            _build_schedule_time_provider,
+            run_full_analysis,
+        ):
             return 0
 
-        # 模式1: 次日模拟交易执行
-        if getattr(args, 'moni_execute', False):
-            logger.info("模式: 次日模拟交易执行")
-            from scripts.run_moni_execute import execute_latest_plan
-            execute_latest_plan()
-            return 0
-
-        # 模式2: 仅大盘复盘
-        if args.market_review:
-            from src.analyzer import GeminiAnalyzer
-            from src.core.market_review import run_market_review
-            from src.notification import NotificationService
-            from src.search_service import SearchService
-
-            # Issue #373: Trading day check for market-review-only mode.
-            # Do NOT use _compute_trading_day_filter here: that helper checks
-            # config.market_review_enabled, which would wrongly block an
-            # explicit --market-review invocation when the flag is disabled.
-            effective_region = None
-            if not getattr(args, 'force_run', False) and getattr(config, 'trading_day_check_enabled', True):
-                from src.core.trading_calendar import get_open_markets_today, compute_effective_region as _compute_region
-                open_markets = get_open_markets_today()
-                effective_region = _compute_region('cn', open_markets)
-                if effective_region == '':
-                    logger.info("今日大盘复盘相关市场均为非交易日，跳过执行。可使用 --force-run 强制执行。")
-                    return 0
-
-            logger.info("模式: 仅大盘复盘")
-            notifier = NotificationService()
-
-            # 初始化搜索服务和分析器（如果有配置）
-            search_service = None
-            analyzer = None
-
-            if config.has_search_capability_enabled():
-                search_service = SearchService(
-                    bocha_keys=config.bocha_api_keys,
-                    tavily_keys=config.tavily_api_keys,
-                    brave_keys=config.brave_api_keys,
-                    serpapi_keys=config.serpapi_keys,
-                    minimax_keys=config.minimax_api_keys,
-                    searxng_base_urls=config.searxng_base_urls,
-                    searxng_public_instances_enabled=config.searxng_public_instances_enabled,
-                    news_max_age_days=config.news_max_age_days,
-                    news_strategy_profile=getattr(config, "news_strategy_profile", "short"),
-                )
-
-            if config.gemini_api_key or config.openai_api_key:
-                analyzer = GeminiAnalyzer(api_key=config.gemini_api_key)
-                if not analyzer.is_available():
-                    logger.warning("AI 分析器初始化后不可用，请检查 API Key 配置")
-                    analyzer = None
-            else:
-                logger.warning("未检测到 API Key (Gemini/OpenAI)，将仅使用模板生成报告")
-
-            run_market_review(
-                notifier=notifier,
-                analyzer=analyzer,
-                search_service=search_service,
-                send_notification=True,
-                override_region=effective_region,
-            )
-            return 0
-
-        # 模式2: 定时任务模式
-        if args.schedule or config.schedule_enabled:
-            logger.info("模式: 定时任务")
-            logger.info(f"每日执行时间: {config.schedule_time}")
-
-            # Determine whether to run immediately:
-            # Command line arg --no-run-immediately overrides config if present.
-            # Otherwise use config (defaults to True).
-            should_run_immediately = config.schedule_run_immediately
-            if getattr(args, 'no_run_immediately', False):
-                should_run_immediately = False
-
-            logger.info(f"启动时立即执行: {should_run_immediately}")
-
-            from src.scheduler import run_with_schedule
-            scheduled_stock_codes = _resolve_scheduled_stock_codes(stock_codes)
-            schedule_time_provider = _build_schedule_time_provider(config.schedule_time)
-
-            def scheduled_task():
-                runtime_config = _reload_runtime_config()
-                run_full_analysis(runtime_config, args, scheduled_stock_codes)
-
-            background_tasks = []
-            if getattr(config, 'agent_event_monitor_enabled', False):
-                from src.agent.events import build_event_monitor_from_config, run_event_monitor_once
-
-                monitor = build_event_monitor_from_config(config)
-                if monitor is not None:
-                    interval_minutes = max(1, getattr(config, 'agent_event_monitor_interval_minutes', 5))
-
-                    def event_monitor_task():
-                        triggered = run_event_monitor_once(monitor)
-                        if triggered:
-                            logger.info("[EventMonitor] 本轮触发 %d 条提醒", len(triggered))
-
-                    background_tasks.append({
-                        "task": event_monitor_task,
-                        "interval_seconds": interval_minutes * 60,
-                        "run_immediately": True,
-                        "name": "agent_event_monitor",
-                    })
-                else:
-                    logger.info("EventMonitor 已启用，但未加载到有效规则，跳过后台提醒任务")
-
-            run_with_schedule(
-                task=scheduled_task,
-                schedule_time=config.schedule_time,
-                run_immediately=should_run_immediately,
-                background_tasks=background_tasks,
-                schedule_time_provider=schedule_time_provider,
-            )
-            return 0
-
-        # 模式3: 正常单次运行
-        if config.run_immediately:
-            run_full_analysis(config, args, stock_codes)
-        else:
-            logger.info("配置为不立即运行分析 (RUN_IMMEDIATELY=false)")
-
-        logger.info("\n程序执行完成")
-
-        # 如果启用了服务且是非定时任务模式，保持程序运行
-        keep_running = start_serve and not (args.schedule or config.schedule_enabled)
-        if keep_running:
-            logger.info("API 服务运行中 (按 Ctrl+C 退出)...")
-            try:
-                while True:
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                pass
-
-        return 0
+        return _run_single_analysis_mode(config, args, stock_codes, start_serve, run_full_analysis)
 
     except KeyboardInterrupt:
         logger.info("\n用户中断，程序退出")

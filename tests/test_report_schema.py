@@ -59,6 +59,23 @@ class TestAnalysisReportSchema(unittest.TestCase):
         self.assertIsNone(schema.dashboard)
         self.assertIsNone(schema.analysis_summary)
 
+    def test_schema_allows_runtime_context_fields_to_remain_external(self) -> None:
+        """Runtime report fields should stay outside the LLM schema contract."""
+        data = {
+            "stock_name": "测试",
+            "sentiment_score": 50,
+            "trend_prediction": "震荡",
+            "operation_advice": "观望",
+            "report_reliability": "high",
+            "report_quality_map": {"000001": {"report_reliability": "high"}},
+            "report_decision_map": {"000001": {"action": "买入"}},
+        }
+        schema = AnalysisReportSchema.model_validate(data)
+        self.assertEqual(schema.stock_name, "测试")
+        self.assertEqual(schema.model_extra.get("report_reliability"), "high")
+        self.assertIn("report_quality_map", schema.model_extra)
+        self.assertIn("report_decision_map", schema.model_extra)
+
     def test_schema_allows_numeric_strings(self) -> None:
         """Schema accepts string values for numeric fields (LLM may return N/A)."""
         data = {

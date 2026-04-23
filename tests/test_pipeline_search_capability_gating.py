@@ -13,6 +13,7 @@ class _DummyResult:
     query_id = None
     current_price = None
     change_pct = None
+    dashboard = {}
 
 
 class _DummyTrendResult:

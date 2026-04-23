@@ -546,6 +546,22 @@ def infer_decision_type_from_advice(value: Any, default: str = "hold") -> str:
     return default
 
 
+def get_advice_buckets(results: Any) -> tuple[int, int, int]:
+    """Count buy/hold/sell buckets from report results using operation_advice."""
+    buy_count = 0
+    hold_count = 0
+    sell_count = 0
+    for result in results or []:
+        bucket = infer_decision_type_from_advice(getattr(result, "operation_advice", None))
+        if bucket == "buy":
+            buy_count += 1
+        elif bucket == "sell":
+            sell_count += 1
+        else:
+            hold_count += 1
+    return buy_count, hold_count, sell_count
+
+
 def get_signal_level(advice: Any, score: Any, language: Optional[str]) -> tuple[str, str, str]:
     """Return localized signal text, emoji, and stable color tag."""
     normalized_language = normalize_report_language(language)

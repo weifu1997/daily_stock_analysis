@@ -212,6 +212,7 @@ gh run view <run_id> --log-failed
   - `.claude/skills/analyze-issue/SKILL.md`
   - `.claude/skills/analyze-pr/SKILL.md`
   - `.claude/skills/fix-issue/SKILL.md`
+- 这些 skill 的统一模板要求是：`目标 / 适用场景 / 工作流 / 建议输出结构 / 约束`，且默认先结论后证据、先风险后建议。
 - 如果任务明确是 issue 分析、PR 审查、issue 修复，优先按对应 skill 执行，并将产物保存到 `.claude/reviews/`。
 - skill 中的命令、模板、验证顺序和交付结构必须与 `AGENTS.md` 保持一致。
 - skill 默认优先读取 CI / 工作流证据，再决定是否补本地验证。

@@ -58,7 +58,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertFalse(items["GEMINI_API_KEY"]["is_masked"])
         self.assertTrue(items["GEMINI_API_KEY"]["raw_value_exists"])
 
-    def test_export_desktop_env_returns_raw_text(self) -> None:
+    def test_export_desktop_env_masks_sensitive_values(self) -> None:
         self.env_path.write_text(
             "# Desktop config\nSTOCK_LIST=600519,000001\n\nGEMINI_API_KEY=secret-key-value\n",
             encoding="utf-8",
@@ -68,7 +68,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
 
         self.assertEqual(
             payload["content"],
-            "# Desktop config\nSTOCK_LIST=600519,000001\n\nGEMINI_API_KEY=secret-key-value\n",
+            "# Desktop config\nSTOCK_LIST=600519,000001\n\nGEMINI_API_KEY=******\n",
         )
         self.assertEqual(payload["config_version"], self.manager.get_config_version())
 

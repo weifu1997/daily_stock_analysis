@@ -264,6 +264,52 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertNotIn("消息面", out)
 
     @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_report_includes_portfolio_snapshot(self, mock_get_config: mock.MagicMock):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=True, report_language="zh")
+        service = NotificationService()
+        result = AnalysisResult(
+            code="603166",
+            name="福然德",
+            sentiment_score=78,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="仓位稳定。",
+            report_language="zh",
+            dashboard={
+                "core_conclusion": {
+                    "one_sentence": "持有等待确认。",
+                    "position_advice": {
+                        "no_position": "观望为主。",
+                        "has_position": "继续持有。",
+                    },
+                }
+            },
+        )
+
+        out = service.generate_dashboard_report(
+            [result],
+            report_date="2026-04-22",
+            extra_context={
+                "portfolio_contexts": {
+                    "603166": {
+                        "has_position": True,
+                        "quantity": 1200,
+                        "cost_basis": 9.88,
+                        "unrealized_pnl": 512.34,
+                        "valuation_currency": "CNY",
+                        "source": "portfolio_snapshot",
+                    }
+                }
+            },
+        )
+
+        self.assertIn("持仓快照", out)
+        self.assertIn("数量 1200", out)
+        self.assertIn("成本 9.88", out)
+        self.assertIn("浮盈亏 512.34", out)
+        self.assertIn("币种 CNY", out)
+
+    @mock.patch("src.notification.get_config")
     def test_generate_dashboard_report_appends_normalization_summary(self, mock_get_config: mock.MagicMock):
         mock_get_config.return_value = _make_config(report_renderer_enabled=False, report_language="zh")
         service = NotificationService()

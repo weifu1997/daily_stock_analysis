@@ -50,13 +50,14 @@ class TestPortfolioSnapshotSemantics:
         assert payload["public"]["as_of"] == "2026-01-05"
         persist_mock.assert_not_called()
 
-    def test_get_portfolio_snapshot_keeps_existing_persist_side_effect(self):
+    def test_get_portfolio_snapshot_is_readonly_no_persist(self):
+        """get_portfolio_snapshot 必须是纯读操作，不应触发写库。"""
         with patch.object(self.service.repo, "replace_positions_lots_and_snapshot") as persist_mock:
             self.service.get_portfolio_snapshot(account_id=None, as_of=date(2026, 1, 5), cost_method="fifo")
-
         persist_mock.assert_not_called()
 
-    def test_get_portfolio_snapshot_persists_when_accounts_exist(self):
+    def test_get_portfolio_snapshot_readonly_even_when_accounts_exist(self):
+        """即使账户存在，get_portfolio_snapshot 也不应写库。"""
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]
         self.service.record_cash_ledger(
@@ -69,6 +70,24 @@ class TestPortfolioSnapshotSemantics:
 
         with patch.object(self.service.repo, "replace_positions_lots_and_snapshot") as persist_mock:
             payload = self.service.get_portfolio_snapshot(account_id=aid, as_of=date(2026, 1, 5), cost_method="fifo")
+
+        assert payload["account_count"] == 1
+        persist_mock.assert_not_called()
+
+    def test_materialize_snapshot_triggers_persist(self):
+        """materialize_snapshot 应显式触发写库。"""
+        account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=1000,
+            currency="CNY",
+        )
+
+        with patch.object(self.service.repo, "replace_positions_lots_and_snapshot") as persist_mock:
+            payload = self.service.materialize_snapshot(account_id=aid, as_of=date(2026, 1, 5), cost_method="fifo")
 
         assert payload["account_count"] == 1
         persist_mock.assert_called_once()

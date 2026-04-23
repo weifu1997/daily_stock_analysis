@@ -24,9 +24,10 @@ from datetime import datetime
 from typing import Optional, Union, Dict, Any
 
 from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.params import Depends as DependsClass
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from api.deps import get_config_dep
+from api.deps import get_config_dep, get_current_owner_id
 from api.v1.schemas.analysis import (
     AnalyzeRequest,
     AnalysisResultResponse,
@@ -141,7 +142,8 @@ def _resolve_and_normalize_input(raw_value: str) -> str:
 )
 def trigger_analysis(
         request: AnalyzeRequest,
-        config: Config = Depends(get_config_dep)
+        config: Config = Depends(get_config_dep),
+        owner_id: Optional[str] = Depends(get_current_owner_id),
 ) -> Union[AnalysisResultResponse, JSONResponse]:
     """
     触发股票分析
@@ -166,6 +168,9 @@ def trigger_analysis(
         HTTPException: 409 - 股票正在分析中
         HTTPException: 500 - 分析失败
     """
+    # Guard against direct function calls where Depends() object is not resolved
+    if isinstance(owner_id, DependsClass):
+        owner_id = None
     # 校验请求参数
     stock_codes = []
     if request.stock_code:
@@ -231,12 +236,13 @@ def trigger_analysis(
         return _handle_sync_analysis(stock_codes[0], request)
 
     # Async mode submits one task per stock.
-    return _handle_async_analysis_batch(stock_codes, request)
+    return _handle_async_analysis_batch(stock_codes, request, owner_id=owner_id)
 
 
 def _handle_async_analysis_batch(
     stock_codes: list,
-    request: AnalyzeRequest
+    request: AnalyzeRequest,
+    owner_id: Optional[str] = None,
 ) -> JSONResponse:
     """
     Handle asynchronous analysis requests, including batch submission.
@@ -262,6 +268,7 @@ def _handle_async_analysis_batch(
         report_type=request.report_type,
         force_refresh=request.force_refresh,
         notify=notify,
+        owner_id=owner_id,
     )
 
     accepted_tasks, duplicate_errors = task_queue.submit_tasks_batch(**submit_kwargs)
@@ -411,6 +418,7 @@ def get_task_list(
         description="筛选状态：pending, processing, completed, failed（支持逗号分隔多个）"
     ),
     limit: int = Query(20, description="返回数量限制", ge=1, le=100),
+    owner_id: Optional[str] = Depends(get_current_owner_id),
 ) -> TaskListResponse:
     """
     获取分析任务列表
@@ -425,7 +433,7 @@ def get_task_list(
     task_queue = get_task_queue()
     
     # 获取所有任务
-    all_tasks = task_queue.list_all_tasks(limit=limit)
+    all_tasks = task_queue.list_all_tasks(limit=limit, owner_id=owner_id)
     
     # 状态筛选
     if status:

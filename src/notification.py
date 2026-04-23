@@ -26,6 +26,7 @@ from src.report_language import (
     get_report_labels,
     get_result_guardrail_messages,
     get_result_guardrail_traces,
+    get_advice_buckets,
     infer_decision_type_from_advice,
     get_signal_level,
     localize_chip_health,
@@ -229,13 +230,24 @@ class NotificationService(
         report_type: Any,
         report_date: Optional[str] = None,
         normalization_summary: Optional[Dict[str, Any]] = None,
+        extra_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Generate the aggregate report content used by merge/save/push paths."""
         normalized_type = self._normalize_report_type(report_type)
         if normalized_type == ReportType.BRIEF:
-            report = self.generate_brief_report(results, report_date=report_date, normalization_summary=normalization_summary)
+            report = self.generate_brief_report(
+                results,
+                report_date=report_date,
+                normalization_summary=normalization_summary,
+                extra_context=extra_context,
+            )
         else:
-            report = self.generate_dashboard_report(results, report_date=report_date, normalization_summary=normalization_summary)
+            report = self.generate_dashboard_report(
+                results,
+                report_date=report_date,
+                normalization_summary=normalization_summary,
+                extra_context=extra_context,
+            )
 
         return report
 
@@ -657,18 +669,7 @@ class NotificationService(
         )
         
         # 统计 - 与摘要列表统一按 operation_advice 归类
-        buy_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'buy'
-        )
-        sell_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'sell'
-        )
-        hold_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'hold'
-        )
+        buy_count, hold_count, sell_count = get_advice_buckets(results)
         avg_score = sum(r.sentiment_score for r in results) / len(results) if results else 0
         
         report_lines.extend([
@@ -876,6 +877,7 @@ class NotificationService(
         results: List[AnalysisResult],
         report_date: Optional[str] = None,
         normalization_summary: Optional[Dict[str, Any]] = None,
+        extra_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         生成决策仪表盘格式的日报（详细版）
@@ -908,6 +910,7 @@ class NotificationService(
                 extra_context={
                     **self._get_history_compare_context(results),
                     "report_language": report_language,
+                    **(extra_context or {}),
                 },
             )
             if out:
@@ -920,18 +923,7 @@ class NotificationService(
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
 
         # 统计 - 与摘要列表统一按 operation_advice 归类
-        buy_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'buy'
-        )
-        sell_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'sell'
-        )
-        hold_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'hold'
-        )
+        buy_count, hold_count, sell_count = get_advice_buckets(results)
 
         report_lines = [
             f"# 🎯 {report_date} {labels['dashboard_title']}",
@@ -1218,7 +1210,7 @@ class NotificationService(
         
         return "\n".join(report_lines)
     
-    def generate_wechat_dashboard(self, results: List[AnalysisResult]) -> str:
+    def generate_wechat_dashboard(self, results: List[AnalysisResult], extra_context: Optional[Dict[str, Any]] = None) -> str:
         """
         生成企业微信决策仪表盘精简版（控制在4000字符内）
         
@@ -1240,7 +1232,7 @@ class NotificationService(
                 results=results,
                 report_date=datetime.now().strftime('%Y-%m-%d'),
                 summary_only=self._report_summary_only,
-                extra_context={"report_language": report_language},
+                extra_context={"report_language": report_language, **(extra_context or {})},
             )
             if out:
                 return out
@@ -1251,18 +1243,7 @@ class NotificationService(
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
         
         # 统计 - 与摘要列表统一按 operation_advice 归类
-        buy_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'buy'
-        )
-        sell_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'sell'
-        )
-        hold_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'hold'
-        )
+        buy_count, hold_count, sell_count = get_advice_buckets(results)
         
         lines = [
             f"## 🎯 {report_date} {labels['dashboard_title']}",
@@ -1414,18 +1395,7 @@ class NotificationService(
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
 
         # 统计 - 与摘要列表统一按 operation_advice 归类
-        buy_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'buy'
-        )
-        sell_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'sell'
-        )
-        hold_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'hold'
-        )
+        buy_count, hold_count, sell_count = get_advice_buckets(results)
         avg_score = sum(r.sentiment_score for r in results) / len(results) if results else 0
 
         lines = [
@@ -1485,6 +1455,7 @@ class NotificationService(
         results: List[AnalysisResult],
         report_date: Optional[str] = None,
         normalization_summary: Optional[Dict[str, Any]] = None,
+        extra_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Generate brief report (3-5 sentences per stock) for mobile/push.
@@ -1508,7 +1479,7 @@ class NotificationService(
                 results=results,
                 report_date=report_date,
                 summary_only=False,
-                extra_context={"report_language": report_language},
+                extra_context={"report_language": report_language, **(extra_context or {})},
             )
             if out:
                 return out
@@ -1516,18 +1487,7 @@ class NotificationService(
         if not results:
             return f"# {report_date} {labels['brief_title']}\n\n{labels['no_results']}"
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
-        buy_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'buy'
-        )
-        sell_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'sell'
-        )
-        hold_count = sum(
-            1 for r in results
-            if infer_decision_type_from_advice(getattr(r, 'operation_advice', None)) == 'hold'
-        )
+        buy_count, hold_count, sell_count = get_advice_buckets(results)
         lines = [
             f"# {report_date} {labels['brief_title']}",
             "",
@@ -1555,12 +1515,12 @@ class NotificationService(
     def generate_single_stock_report(self, result: AnalysisResult) -> str:
         """
         生成单只股票的分析报告（用于单股推送模式 #55）
-        
+
         格式精简但信息完整，适合每分析完一只股票立即推送
-        
+
         Args:
             result: 单只股票的分析结果
-            
+
         Returns:
             Markdown 格式的单股报告
         """
@@ -1572,10 +1532,10 @@ class NotificationService(
         core = dashboard.get('core_conclusion', {}) if dashboard else {}
         battle = dashboard.get('battle_plan', {}) if dashboard else {}
         intel = dashboard.get('intelligence', {}) if dashboard else {}
-        
+
         # 股票名称（转义 *ST 等特殊字符）
         stock_name = self._get_display_name(result, report_language)
-        
+
         lines = [
             f"## {signal_emoji} {stock_name} ({result.code})",
             "",
@@ -1597,7 +1557,7 @@ class NotificationService(
                 f"- 最新复权日期: {latest_adj.get('date', 'N/A')}",
                 "",
             ])
-        
+
         # 核心决策（一句话）
         one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary
         if one_sentence:
@@ -1607,7 +1567,7 @@ class NotificationService(
                 f"**{signal_text}（次日执行建议）**: {one_sentence}",
                 "",
             ])
-        
+
         # 重要信息（舆情+基本面）
         info_added = False
         if intel:
@@ -1617,14 +1577,14 @@ class NotificationService(
                     lines.append("")
                     info_added = True
                 lines.append(f"📊 **{labels['earnings_outlook_label']}**: {str(intel['earnings_outlook'])[:100]}")
-            
+
             if intel.get('sentiment_summary'):
                 if not info_added:
                     lines.append(f"### 📰 {labels['info_heading']}")
                     lines.append("")
                     info_added = True
                 lines.append(f"💭 **{labels['sentiment_summary_label']}**: {str(intel['sentiment_summary'])[:80]}")
-            
+
             # 风险警报
             risks = intel.get('risk_alerts', [])
             if risks:
@@ -1636,7 +1596,7 @@ class NotificationService(
                 lines.append(f"🚨 **{labels['risk_alerts_label']}**:")
                 for risk in risks[:3]:
                     lines.append(f"- {str(risk)[:60]}")
-            
+
             # 利好催化
             catalysts = intel.get('positive_catalysts', [])
             if catalysts:
@@ -1644,7 +1604,7 @@ class NotificationService(
                 lines.append(f"✨ **{labels['positive_catalysts_label']}**:")
                 for cat in catalysts[:3]:
                     lines.append(f"- {str(cat)[:60]}")
-        
+
         if info_added:
             lines.append("")
         
@@ -1808,7 +1768,8 @@ class NotificationService(
                 try:
                     from src.config import get_config
                     engine = getattr(get_config(), "md2img_engine", "wkhtmltoimage")
-                except Exception:
+                except Exception as exc:
+                    logger.debug("读取 md2img_engine 配置失败，使用默认值: %s", exc)
                     engine = "wkhtmltoimage"
                 hint = (
                     "npm i -g markdown-to-file" if engine == "markdown-to-file"

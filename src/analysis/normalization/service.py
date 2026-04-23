@@ -185,7 +185,6 @@ _DEFAULT_RULES: List[NormalizationRule] = [
     DecisionConsistencyRule(),
     PortfolioContextRule(),
     HolderStructureRule(),
-    DecisionConsistencyRule(),
     PositionStrengthRule(),
 ]
 
