@@ -9,8 +9,10 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+
+from api.deps import get_current_owner_id
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from src.config import get_config
@@ -146,7 +148,10 @@ async def get_strategies():
     )
 
 @router.post("/chat", response_model=ChatResponse)
-async def agent_chat(request: ChatRequest):
+async def agent_chat(
+    request: ChatRequest,
+    owner_id: Optional[str] = Depends(get_current_owner_id),
+):
     """
     Chat with the AI Agent.
     """
@@ -156,6 +161,12 @@ async def agent_chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Agent mode is not enabled")
         
     session_id = request.session_id or str(uuid.uuid4())
+
+    if owner_id and request.session_id and not request.session_id.startswith(owner_id):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "forbidden", "message": "无权访问该会话"}
+        )
     
     try:
         skills = request.effective_skills
@@ -205,17 +216,16 @@ class SessionMessagesResponse(BaseModel):
 
 
 @router.get("/chat/sessions", response_model=SessionsResponse)
-async def list_chat_sessions(limit: int = 50, user_id: Optional[str] = None):
+async def list_chat_sessions(
+    limit: int = 50,
+    user_id: Optional[str] = Query(None, description="平台前缀用户标识，如 feishu_ou_xxx")
+):
     """获取聊天会话列表
 
-    Args:
-        limit: Maximum number of sessions to return.
-        user_id: Optional platform-prefixed user identifier for session
-            isolation.  When provided, only sessions whose session_id
-            starts with this prefix are returned.  The value must
-            include the platform prefix, e.g. ``telegram_12345``,
-            ``feishu_ou_abc``.
+    当提供 user_id 时，仅返回该用户前缀的会话；未提供时返回空列表。
     """
+    if not user_id:
+        return SessionsResponse(sessions=[])
     from src.storage import get_db
     sessions = get_db().get_chat_sessions(
         limit=limit,
@@ -226,16 +236,33 @@ async def list_chat_sessions(limit: int = 50, user_id: Optional[str] = None):
 
 
 @router.get("/chat/sessions/{session_id}", response_model=SessionMessagesResponse)
-async def get_chat_session_messages(session_id: str, limit: int = 100):
+async def get_chat_session_messages(
+    session_id: str,
+    limit: int = 100,
+    user_id: Optional[str] = Query(None, description="平台前缀用户标识")
+):
     """获取单个会话的完整消息"""
+    if user_id and not session_id.startswith(user_id):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "forbidden", "message": "无权访问该会话"}
+        )
     from src.storage import get_db
     messages = get_db().get_conversation_messages(session_id, limit=limit)
     return SessionMessagesResponse(session_id=session_id, messages=messages)
 
 
 @router.delete("/chat/sessions/{session_id}")
-async def delete_chat_session(session_id: str):
+async def delete_chat_session(
+    session_id: str,
+    user_id: Optional[str] = Query(None, description="平台前缀用户标识")
+):
     """删除指定会话"""
+    if user_id and not session_id.startswith(user_id):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "forbidden", "message": "无权删除该会话"}
+        )
     from src.storage import get_db
     count = get_db().delete_conversation_session(session_id)
     return {"deleted": count}
@@ -371,22 +398,25 @@ async def agent_research(request: ResearchRequest):
 
 
 @router.post("/chat/stream")
-async def agent_chat_stream(request: ChatRequest):
+async def agent_chat_stream(
+    request: ChatRequest,
+    owner_id: Optional[str] = Depends(get_current_owner_id),
+):
     """
     Chat with the AI Agent, streaming progress via SSE.
-    Each SSE event is a JSON object with a 'type' field:
-      - thinking: AI is deciding next action
-      - tool_start: a tool call has begun
-      - tool_done: a tool call finished
-      - generating: final answer being generated
-      - done: analysis complete, contains 'content' and 'success'
-      - error: error occurred, contains 'message'
     """
     config = get_config()
     if not config.is_agent_available():
         raise HTTPException(status_code=400, detail="Agent mode is not enabled")
 
     session_id = request.session_id or str(uuid.uuid4())
+
+    if owner_id and request.session_id and not request.session_id.startswith(owner_id):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "forbidden", "message": "无权访问该会话"}
+        )
+
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
