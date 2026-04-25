@@ -109,7 +109,8 @@ class TestPipelineCandidatePool(unittest.TestCase):
         pipeline._build_portfolio_context_map = MagicMock(return_value={})
         pipeline._build_report_quality_context_map = MagicMock(return_value={})
         pipeline._build_report_decision_context_map = MagicMock(return_value={})
-        result = AnalysisResult(code="605305", name="中际联合", sentiment_score=74, trend_prediction="看多", operation_advice="买入")
+        pipeline._get_cached_portfolio_snapshot = MagicMock(return_value={"total_cash": 50_000, "total_equity": 200_000, "accounts": []})
+        result = AnalysisResult(code="605305", name="中际联合", sentiment_score=74, trend_prediction="看多", operation_advice="买入", current_price=35.2)
         result.candidate_layer_score = {"score": 19, "trade_bias": "right_side_candidate"}
 
         context = pipeline._build_report_extra_context([result])
@@ -117,6 +118,7 @@ class TestPipelineCandidatePool(unittest.TestCase):
         self.assertIn("execution_plan_map", context)
         self.assertTrue(context["execution_plan_map"]["605305"]["eligible_for_l3"])
         self.assertEqual(context["execution_plan_map"]["605305"]["hard_stop_loss_pct"], -8)
+        self.assertEqual(context["execution_plan_map"]["605305"]["account_constraints"]["suggested_shares"], 100)
 
 
 if __name__ == "__main__":

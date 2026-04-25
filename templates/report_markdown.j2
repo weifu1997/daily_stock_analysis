@@ -175,6 +175,10 @@
 | {{ '单票上限' if report_language != 'en' else 'Single-stock Cap' }} | {{ '单票上限10%' if report_language != 'en' else '10% max single-stock weight' }} |
 | {{ '硬止损' if report_language != 'en' else 'Hard Stop' }} | {{ execution_plan.get('hard_stop_loss_pct', 'N/A') }}% |
 | {{ '时间止损' if report_language != 'en' else 'Time Stop' }} | {{ execution_plan.get('time_stop_days', 'N/A') }}{{ '个交易日' if report_language != 'en' else ' trading days' }} |
+{% set account_constraints = execution_plan.get('account_constraints') or {} %}
+{% if account_constraints %}
+| {{ '账户约束' if report_language != 'en' else 'Account Constraints' }} | {{ '可用现金' if report_language != 'en' else 'Cash' }} {{ account_constraints.get('available_cash', 'N/A') }}；{{ '总权益' if report_language != 'en' else 'Equity' }} {{ account_constraints.get('total_equity', 'N/A') }}；{{ '计划金额' if report_language != 'en' else 'Planned Value' }} {{ account_constraints.get('cash_limited_value', 'N/A') }}；{{ '建议股数' if report_language != 'en' else 'Suggested Shares' }} {{ account_constraints.get('suggested_shares', 'N/A') }} |
+{% endif %}
 {% if execution_plan.get('risk_notes') %}
 | {{ '纪律备注' if report_language != 'en' else 'Discipline Notes' }} | {{ (execution_plan.get('risk_notes') or [])|join('；') if report_language != 'en' else (execution_plan.get('risk_notes') or [])|join('; ') }} |
 {% endif %}

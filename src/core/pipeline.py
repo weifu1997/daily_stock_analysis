@@ -1794,7 +1794,7 @@ class StockAnalysisPipeline:
 
     def _build_execution_plan_context_map(self, results: List[AnalysisResult]) -> Dict[str, Dict[str, Any]]:
         """Build per-stock L3 execution plan map for report rendering."""
-        return build_execution_plan_map(results)
+        return build_execution_plan_map(results, portfolio_snapshot=self._get_cached_portfolio_snapshot())
 
     def _build_report_extra_context(self, results: List[AnalysisResult]) -> Dict[str, Any]:
         """Build extra_context shared by render/save/push paths."""

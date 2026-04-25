@@ -234,6 +234,15 @@ class TestReportRenderer(unittest.TestCase):
                         "hard_stop_loss_pct": -8,
                         "time_stop_days": 30,
                         "risk_notes": ["不自动买入，等待右侧触发"],
+                        "account_constraints": {
+                            "available_cash": 50000,
+                            "total_equity": 200000,
+                            "max_position_value": 20000,
+                            "target_entry_value": 6600,
+                            "cash_limited_value": 6600,
+                            "suggested_shares": 100,
+                            "lot_size": 100,
+                        },
                     }
                 }
             },
@@ -246,6 +255,11 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("-8%", out)
         self.assertIn("30个交易日", out)
         self.assertIn("不自动买入", out)
+        self.assertIn("账户约束", out)
+        self.assertIn("可用现金", out)
+        self.assertIn("50000", out)
+        self.assertIn("建议股数", out)
+        self.assertIn("100", out)
         self.assertIn("买入", out)
 
     def test_render_markdown_uses_decision_context_when_provided(self) -> None:
