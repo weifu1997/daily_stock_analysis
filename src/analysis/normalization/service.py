@@ -13,6 +13,48 @@ from .models import (
 from .portfolio_rules import HolderStructureRule, PortfolioContextRule
 
 RISK_PENALTY_DEFAULT_THRESHOLD = 0.7
+L2_NEAR_STRONG_THRESHOLD = 14
+L2_L3_GATE_THRESHOLD = 18
+
+
+def _safe_l2_score(value: Any) -> Optional[float]:
+    try:
+        if value is None or value == "":
+            return None
+        score = float(value)
+        if score != score:  # NaN
+            return None
+        return score
+    except Exception:
+        return None
+
+
+def _get_candidate_layer_score(result: "AnalysisResult") -> Optional[dict[str, Any]]:
+    payload = getattr(result, "candidate_layer_score", None)
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _set_core_conclusion(result: "AnalysisResult", *, one_sentence: Optional[str] = None, no_position: Optional[str] = None, has_position: Optional[str] = None) -> None:
+    dashboard = getattr(result, "dashboard", None)
+    if not isinstance(dashboard, dict):
+        dashboard = {}
+        result.dashboard = dashboard
+    core = dashboard.get("core_conclusion")
+    if not isinstance(core, dict):
+        core = {}
+        dashboard["core_conclusion"] = core
+    if one_sentence is not None:
+        core["one_sentence"] = one_sentence
+    position_advice = core.get("position_advice")
+    if not isinstance(position_advice, dict):
+        position_advice = {}
+        core["position_advice"] = position_advice
+    if no_position is not None:
+        position_advice["no_position"] = no_position
+    if has_position is not None:
+        position_advice["has_position"] = has_position
 
 
 def _normalize_risk_penalty(value: Any) -> float:
@@ -39,6 +81,64 @@ def _derive_position_strength(result) -> str:
     if decision == "sell":
         return "defense"
     return "neutral"
+
+
+class L2CandidateGateRule:
+    name = "l2-candidate-gate"
+
+    @staticmethod
+    def apply(result: "AnalysisResult", context: AnalysisNormalizationContext) -> None:
+        if str(getattr(result, "decision_type", "hold") or "hold").strip().lower() != "buy":
+            return
+        payload = _get_candidate_layer_score(result)
+        if not payload:
+            return
+        score = _safe_l2_score(payload.get("score"))
+        if score is None:
+            return
+        trade_bias = str(payload.get("trade_bias") or "").strip().lower()
+        if score >= L2_L3_GATE_THRESHOLD and trade_bias == "right_side_candidate":
+            return
+
+        result.decision_type = "hold"
+        result.operation_advice = localized_operation_advice_for_signal(
+            "hold",
+            getattr(result, "report_language", "zh"),
+        )
+        if score < L2_NEAR_STRONG_THRESHOLD:
+            _set_core_conclusion(
+                result,
+                no_position="L2二筛未达到交易门槛，空仓者不买入，等待重新评分或右侧确认。",
+                has_position="L2二筛未达到交易门槛，持仓者按原风控计划管理，不新增仓位。",
+            )
+        else:
+            _set_core_conclusion(
+                result,
+                one_sentence="L2二筛为近强观察，尚未进入L3交易执行；等待右侧确认。",
+                no_position="近强观察，不直接买入；等待放量突破后回踩不破。",
+                has_position="近强观察，持仓者不加仓；等待右侧结构确认。",
+            )
+
+    @staticmethod
+    def describe_change(
+        *,
+        changed: bool,
+        modified_fields: List[str],
+        before: Any,
+        after: Any,
+        context: AnalysisNormalizationContext,
+    ) -> tuple[str, str]:
+        candidate_score = after.get("candidate_layer_score") if isinstance(after, dict) else None
+        candidate_score = candidate_score if isinstance(candidate_score, dict) else {}
+        after_score = _safe_l2_score(candidate_score.get("score"))
+        after_bias = str(candidate_score.get("trade_bias") or "").strip().lower()
+        if not changed:
+            if after_score is not None and after_score >= L2_L3_GATE_THRESHOLD and after_bias == "right_side_candidate":
+                return "info", "l2_candidate_gate_passed"
+            return "info", "l2_candidate_gate_no_change"
+        if after_score is not None and after_score >= L2_NEAR_STRONG_THRESHOLD:
+            return "hard_guardrail", "l2_candidate_gate_near_strong_observation"
+        return "hard_guardrail", "l2_candidate_gate_buy_blocked"
 
 
 class RiskPenaltyGuardrailRule:
@@ -181,6 +281,7 @@ class PositionStrengthRule:
 
 
 _DEFAULT_RULES: List[NormalizationRule] = [
+    L2CandidateGateRule(),
     RiskPenaltyGuardrailRule(),
     DecisionConsistencyRule(),
     PortfolioContextRule(),

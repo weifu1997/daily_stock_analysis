@@ -468,3 +468,99 @@ def test_normalize_analysis_result_returns_report_summary() -> None:
     assert any(record.severity == "info" for record in report.applied_rules)
     assert any(record.reason_code == "decision_signal_normalized" for record in report.applied_rules if record.changed)
     assert result.to_dict()["normalization_report"]["changed_rule_count"] >= 1
+
+def test_normalization_l2_gate_blocks_buy_below_near_strong_threshold() -> None:
+    result = AnalysisResult(
+        code="002138",
+        name="顺络电子",
+        sentiment_score=72,
+        trend_prediction="看多",
+        operation_advice="买入",
+        decision_type="buy",
+        dashboard={
+            "core_conclusion": {
+                "one_sentence": "模型认为可以买入。",
+                "position_advice": {
+                    "no_position": "空仓者可以买入",
+                    "has_position": "持仓者可以加仓",
+                },
+            }
+        },
+    )
+    result.candidate_layer_score = {
+        "score": 13,
+        "rating": "★★★☆☆ 关注",
+        "trade_bias": "watch",
+        "entry_hint": "观察为主，等待右侧结构修复。",
+    }
+
+    report = normalize_analysis_result(result, AnalysisNormalizationContext())
+
+    assert result.decision_type == "hold"
+    assert result.operation_advice == "持有"
+    assert result.dashboard["core_conclusion"]["position_advice"]["no_position"] == "L2二筛未达到交易门槛，空仓者不买入，等待重新评分或右侧确认。"
+    assert "l2_candidate_gate_buy_blocked" in report.reason_codes
+    gate_record = next(record for record in report.applied_rules if record.rule_name == "l2-candidate-gate")
+    assert gate_record.severity == "hard_guardrail"
+    assert "decision_type" in gate_record.modified_fields
+    assert "operation_advice" in gate_record.modified_fields
+
+
+def test_normalization_l2_gate_holds_near_strong_buy_for_observation() -> None:
+    result = AnalysisResult(
+        code="002906",
+        name="华阳集团",
+        sentiment_score=72,
+        trend_prediction="看多",
+        operation_advice="买入",
+        decision_type="buy",
+        dashboard={
+            "core_conclusion": {
+                "one_sentence": "模型认为可以买入。",
+                "position_advice": {
+                    "no_position": "空仓者可以买入",
+                    "has_position": "持仓者可以加仓",
+                },
+            }
+        },
+    )
+    result.candidate_layer_score = {
+        "score": 16,
+        "rating": "★★★★☆ 推荐",
+        "trade_bias": "watch",
+        "entry_hint": "趋势结构可观察，但仍需放量突破或回踩确认。",
+    }
+
+    report = normalize_analysis_result(result, AnalysisNormalizationContext())
+
+    assert result.decision_type == "hold"
+    assert result.operation_advice == "持有"
+    assert result.dashboard["core_conclusion"]["one_sentence"] == "L2二筛为近强观察，尚未进入L3交易执行；等待右侧确认。"
+    assert result.dashboard["core_conclusion"]["position_advice"]["no_position"] == "近强观察，不直接买入；等待放量突破后回踩不破。"
+    assert "l2_candidate_gate_near_strong_observation" in report.reason_codes
+    gate_record = next(record for record in report.applied_rules if record.rule_name == "l2-candidate-gate")
+    assert gate_record.severity == "hard_guardrail"
+
+
+def test_normalization_l2_gate_allows_strong_right_side_candidate_to_l3() -> None:
+    result = AnalysisResult(
+        code="605305",
+        name="中际联合",
+        sentiment_score=74,
+        trend_prediction="看多",
+        operation_advice="买入",
+        decision_type="buy",
+    )
+    result.candidate_layer_score = {
+        "score": 19,
+        "rating": "★★★★★ 强烈推荐",
+        "trade_bias": "right_side_candidate",
+    }
+
+    report = normalize_analysis_result(result, AnalysisNormalizationContext())
+
+    assert result.decision_type == "buy"
+    assert result.operation_advice == "买入"
+    gate_record = next(record for record in report.applied_rules if record.rule_name == "l2-candidate-gate")
+    assert gate_record.changed is False
+    assert gate_record.reason_code == "l2_candidate_gate_passed"
