@@ -16,7 +16,8 @@ MAX_SINGLE_STOCK_WEIGHT = 0.10
 HARD_STOP_LOSS_PCT = -8
 TIME_STOP_DAYS = 30
 A_SHARE_LOT_SIZE = 100
-DEFAULT_ENTRY_CONDITION = "等待放量突破后回踩不破"
+DEFAULT_ENTRY_CONDITION = "等待 MACD 金叉、KDJ 低位金叉、布林带收口突破共同确认"
+CONFIRMED_ENTRY_CONDITION = "右侧触发已确认：MACD金叉 + KDJ低位金叉 + 布林带收口突破 + 量能确认"
 
 
 def _safe_score(value: Any) -> Optional[float]:
@@ -47,6 +48,129 @@ def _round_money(value: Optional[float]) -> Optional[float]:
     if value is None:
         return None
     return round(float(value), 2)
+
+
+def _truthy_flag(value: Any) -> Optional[bool]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"true", "yes", "y", "1", "confirmed", "pass", "passed"}:
+        return True
+    if text in {"false", "no", "n", "0", "pending", "missing", "none"}:
+        return False
+    return None
+
+
+def _merged_timing_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    timing: Dict[str, Any] = {}
+    metrics = payload.get("metrics")
+    if isinstance(metrics, dict):
+        timing.update(metrics)
+    nested = payload.get("l3_timing") or payload.get("entry_triggers") or payload.get("timing")
+    if isinstance(nested, dict):
+        timing.update(nested)
+    return timing
+
+
+def _contains_any(value: Any, tokens: tuple[str, ...]) -> Optional[bool]:
+    if value is None or value == "":
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    return any(token.lower() in text for token in tokens)
+
+
+def _trigger_status(value: Optional[bool]) -> str:
+    if value is None:
+        return "missing_data"
+    return "confirmed" if value else "pending"
+
+
+def _build_l3_entry_triggers(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    timing = _merged_timing_payload(payload)
+
+    macd = _truthy_flag(timing.get("macd_golden_cross"))
+    if macd is None:
+        macd = _contains_any(timing.get("macd_status"), ("金叉", "多头"))
+
+    kdj = _truthy_flag(timing.get("kdj_low_cross"))
+    if kdj is None:
+        kdj_text = timing.get("kdj_status") or timing.get("kdj_signal")
+        positive_kdj = _contains_any(kdj_text, ("低位金叉", "低位拐头", "低位向上"))
+        negative_kdj = _contains_any(kdj_text, ("钝化", "高位", "死叉", "未金叉"))
+        if positive_kdj is True:
+            kdj = True
+        elif negative_kdj is True:
+            kdj = False
+
+    boll = _truthy_flag(timing.get("bollinger_squeeze_breakout"))
+    if boll is None:
+        boll_text = timing.get("bollinger_status") or timing.get("boll_status") or timing.get("bollinger_signal")
+        positive_boll = _contains_any(boll_text, ("收口突破", "缩口突破", "突破上轨", "放量突破"))
+        negative_boll = _contains_any(boll_text, ("未突破", "收口未突破", "走平"))
+        if positive_boll is True and negative_boll is not True:
+            boll = True
+        elif negative_boll is True:
+            boll = False
+
+    volume = _truthy_flag(timing.get("volume_confirmed"))
+    if volume is None:
+        ratio = _safe_float(timing.get("volume_ratio_20_120"))
+        if ratio is not None:
+            volume = ratio >= 1.05
+
+    return {
+        "macd_golden_cross": {
+            "label": "MACD金叉",
+            "status": _trigger_status(macd),
+            "value": timing.get("macd_golden_cross", timing.get("macd_status")),
+        },
+        "kdj_low_cross": {
+            "label": "KDJ低位金叉",
+            "status": _trigger_status(kdj),
+            "value": timing.get("kdj_low_cross", timing.get("kdj_status") or timing.get("kdj_signal")),
+        },
+        "bollinger_squeeze_breakout": {
+            "label": "布林带收口突破",
+            "status": _trigger_status(boll),
+            "value": timing.get(
+                "bollinger_squeeze_breakout",
+                timing.get("bollinger_status") or timing.get("boll_status") or timing.get("bollinger_signal"),
+            ),
+        },
+        "volume_confirmed": {
+            "label": "量能确认",
+            "status": _trigger_status(volume),
+            "value": timing.get("volume_confirmed", timing.get("volume_ratio_20_120")),
+        },
+    }
+
+
+def _entry_trigger_status(entry_triggers: Dict[str, Dict[str, Any]]) -> str:
+    statuses = [trigger.get("status") for trigger in entry_triggers.values()]
+    if statuses and all(status == "confirmed" for status in statuses):
+        return "confirmed"
+    if statuses and all(status == "missing_data" for status in statuses):
+        return "missing_data"
+    return "pending"
+
+
+def _pending_entry_condition(entry_triggers: Dict[str, Dict[str, Any]]) -> str:
+    if entry_triggers and all(trigger.get("status") == "missing_data" for trigger in entry_triggers.values()):
+        return DEFAULT_ENTRY_CONDITION
+    pending_labels = [
+        str(trigger.get("label"))
+        for trigger in entry_triggers.values()
+        if trigger.get("status") != "confirmed" and trigger.get("label")
+    ]
+    if not pending_labels:
+        return CONFIRMED_ENTRY_CONDITION
+    return "等待" + "、".join(pending_labels) + "共同确认"
 
 
 def _normalize_code(value: Any) -> str:
@@ -175,6 +299,12 @@ def build_execution_plan(
 
     risk_notes = list(payload.get("risk_flags") or [])
     risk_notes.append("L3仅生成观察入场计划，不自动买入；需右侧触发后再按仓位执行。")
+    entry_triggers = _build_l3_entry_triggers(payload)
+    entry_trigger_status = _entry_trigger_status(entry_triggers)
+    if entry_trigger_status == "confirmed":
+        entry_condition = CONFIRMED_ENTRY_CONDITION
+    else:
+        entry_condition = _pending_entry_condition(entry_triggers)
     account_constraints = _build_account_constraints(
         portfolio_snapshot=portfolio_snapshot,
         stock_code=stock_code,
@@ -185,7 +315,9 @@ def build_execution_plan(
         "eligible_for_l3": True,
         "action": "watch_for_entry",
         "reason_code": "l3_watch_entry_plan",
-        "entry_condition": payload.get("entry_hint") or DEFAULT_ENTRY_CONDITION,
+        "entry_condition": entry_condition,
+        "entry_triggers": entry_triggers,
+        "entry_trigger_status": entry_trigger_status,
         "initial_position_fraction": INITIAL_POSITION_FRACTION,
         "max_single_stock_weight": MAX_SINGLE_STOCK_WEIGHT,
         "hard_stop_loss_pct": HARD_STOP_LOSS_PCT,
