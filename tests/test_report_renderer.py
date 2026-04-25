@@ -86,6 +86,168 @@ class TestReportRenderer(unittest.TestCase):
         self.assertIn("核心结论", out)
         self.assertIn("作战计划", out)
 
+    def test_render_markdown_includes_candidate_layer_summary(self) -> None:
+        """Markdown reports should surface portfolio-level L2 distribution summary."""
+        r = _make_result(operation_advice="观望", decision_type="hold")
+        out = render(
+            "markdown",
+            [r],
+            summary_only=False,
+            extra_context={
+                "candidate_layer_summary": {
+                    "total": 3,
+                    "strong_count": 1,
+                    "watch_count": 1,
+                    "excluded_count": 1,
+                    "missing_count": 0,
+                    "right_side_count": 0,
+                    "bucket_text": "18+:1 / 10-13:1 / <6:1",
+                    "top_risk_flags": [{"flag": "非多头排列", "count": 2}],
+                }
+            },
+        )
+        self.assertIsNotNone(out)
+        self.assertIn("L2候选池分布", out)
+        self.assertIn("强候选 1", out)
+        self.assertIn("右侧候选 0", out)
+        self.assertIn("18+:1", out)
+        self.assertIn("非多头排列", out)
+
+    def test_render_markdown_includes_near_strong_candidates(self) -> None:
+        """Markdown reports should show 14-17 near-strong L2 review list."""
+        r = _make_result(operation_advice="观望", decision_type="hold")
+        out = render(
+            "markdown",
+            [r],
+            summary_only=False,
+            extra_context={
+                "candidate_layer_summary": {
+                    "total": 2,
+                    "strong_count": 0,
+                    "watch_count": 1,
+                    "excluded_count": 1,
+                    "missing_count": 0,
+                    "right_side_count": 0,
+                    "bucket_text": "14-17:1 / <6:1",
+                    "top_risk_flags": [],
+                    "near_strong_count": 1,
+                    "near_strong_candidates": [
+                        {
+                            "code": "605305.SH",
+                            "name": "中际联合",
+                            "score": 15,
+                            "gap_to_strong": 3,
+                            "blocking_reasons": ["20日涨幅偏高", "非多头排列"],
+                        }
+                    ],
+                }
+            },
+        )
+        self.assertIsNotNone(out)
+        self.assertIn("近强候选复盘", out)
+        self.assertIn("中际联合", out)
+        self.assertIn("差3分", out)
+        self.assertIn("20日涨幅偏高", out)
+
+    def test_render_markdown_includes_near_strong_blocker_categories(self) -> None:
+        """Markdown reports should show near-strong blocker categories and review-only tuning note."""
+        r = _make_result(operation_advice="观望", decision_type="hold")
+        out = render(
+            "markdown",
+            [r],
+            summary_only=False,
+            extra_context={
+                "candidate_layer_summary": {
+                    "total": 2,
+                    "strong_count": 0,
+                    "watch_count": 2,
+                    "excluded_count": 0,
+                    "missing_count": 0,
+                    "right_side_count": 0,
+                    "bucket_text": "14-17:2",
+                    "top_risk_flags": [],
+                    "near_strong_count": 2,
+                    "near_strong_candidates": [],
+                    "near_strong_blocker_categories": [
+                        {"category": "技术趋势未修复", "count": 1},
+                        {"category": "短期涨幅过高", "count": 1},
+                    ],
+                    "tuning_suggestion": {"mode": "review_only", "text": "只读观察，不自动放宽阈值。"},
+                }
+            },
+        )
+        self.assertIsNotNone(out)
+        self.assertIn("卡点分类", out)
+        self.assertIn("技术趋势未修复", out)
+        self.assertIn("短期涨幅过高", out)
+        self.assertIn("只读观察，不自动放宽阈值", out)
+
+    def test_render_markdown_includes_candidate_score_breakdown(self) -> None:
+        """Markdown reports should surface L2 factor breakdown without changing advice."""
+        r = _make_result(operation_advice="观望", decision_type="hold")
+        out = render(
+            "markdown",
+            [r],
+            summary_only=False,
+            extra_context={
+                "candidate_score_map": {
+                    "600519": {
+                        "rating": "★★★☆☆ 关注",
+                        "score": 12,
+                        "trade_bias": "watch",
+                        "core_logic": "低估值但量能不足",
+                        "risk_flags": ["成交比不足"],
+                        "factor_breakdown": [
+                            {"key": "valuation", "label": "估值", "score": 5, "note": "PB 1.20，PE_TTM 12.00"},
+                            {"key": "quality", "label": "质量/分红", "score": 2, "note": "ROE 8.50%，股息率3.00%"},
+                        ],
+                        "no_trade_reason": "成交比不足，先观察",
+                        "entry_hint": "等待右侧放量确认",
+                    }
+                }
+            },
+        )
+        self.assertIsNotNone(out)
+        self.assertIn("候选二筛", out)
+        self.assertIn("评分拆解", out)
+        self.assertIn("估值", out)
+        self.assertIn("质量/分红", out)
+        self.assertIn("成交比不足，先观察", out)
+        self.assertIn("等待右侧放量确认", out)
+        self.assertIn("观望", out)
+
+    def test_render_markdown_includes_l3_execution_plan_when_provided(self) -> None:
+        """Markdown reports should surface L3 execution plan without changing advice."""
+        r = _make_result(operation_advice="买入", decision_type="buy")
+        out = render(
+            "markdown",
+            [r],
+            summary_only=False,
+            extra_context={
+                "execution_plan_map": {
+                    "600519": {
+                        "eligible_for_l3": True,
+                        "action": "watch_for_entry",
+                        "entry_condition": "等待放量突破后回踩不破",
+                        "initial_position_fraction": 0.33,
+                        "max_single_stock_weight": 0.10,
+                        "hard_stop_loss_pct": -8,
+                        "time_stop_days": 30,
+                        "risk_notes": ["不自动买入，等待右侧触发"],
+                    }
+                }
+            },
+        )
+        self.assertIsNotNone(out)
+        self.assertIn("L3执行计划", out)
+        self.assertIn("等待放量突破后回踩不破", out)
+        self.assertIn("初始1/3目标仓位", out)
+        self.assertIn("单票上限10%", out)
+        self.assertIn("-8%", out)
+        self.assertIn("30个交易日", out)
+        self.assertIn("不自动买入", out)
+        self.assertIn("买入", out)
+
     def test_render_markdown_uses_decision_context_when_provided(self) -> None:
         """Decision structure should come from extra_context when available."""
         r = _make_result(operation_advice="观望", decision_type="hold")

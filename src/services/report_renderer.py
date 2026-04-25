@@ -10,9 +10,11 @@ Any expensive data preparation should be injected by the caller via extra_contex
 """
 
 import logging
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
+from src.analysis.candidate_layers.distribution import build_l2_report_summary
 from src.analyzer import AnalysisResult
 from src.config import get_config
 from src.report_language import (
@@ -57,6 +59,167 @@ def _clean_sniper_value(val: Any) -> str:
         if s.startswith(prefix):
             return s[len(prefix):]
     return s
+
+
+_PROMPT_PLACEHOLDER_RE = re.compile(r"{{\s*([^{}]+?)\s*}}")
+_PROMPT_BLOCK_COMMENT_RE = re.compile(r"{#.*?#}", re.DOTALL)
+_ALLOWED_TEMPLATE_ROOTS = {
+    "report_date",
+    "labels",
+    "results",
+    "enriched",
+    "result",
+    "e",
+    "core",
+    "intel",
+    "battle",
+    "data_persp",
+    "decision_context",
+    "portfolio_context",
+    "portfolio_contexts",
+    "report_quality",
+    "report_quality_map",
+    "candidate_score_map",
+    "candidate_score",
+    "candidate_layer_summary",
+    "execution_plan_map",
+    "execution_plan",
+    "risk_item",
+    "report_decision_map",
+    "history_by_code",
+    "mx_enrichment",
+    "report_timestamp",
+    "summary_only",
+    "buy_count",
+    "sell_count",
+    "hold_count",
+    "report_language",
+    "localize_operation_advice",
+    "localize_trend_prediction",
+    "localize_chip_health",
+    "localize_normalization_reason_code",
+    "get_result_guardrail_messages",
+    "get_result_guardrail_traces",
+    "clean_sniper",
+    "failed_checks",
+    "market_snapshot",
+    "execution_policy_note",
+    # Template-local helpers/variables used inside Jinja control flow
+    "adj_data",
+    "checklist",
+    "chip_data",
+    "guardrail_traces",
+    "institution_data",
+    "position",
+    "price_data",
+    "trend_data",
+    "vol_data",
+    "ns",
+}
+
+
+def _load_template_text(template_name: str) -> Optional[str]:
+    template_path = _resolve_templates_dir() / template_name
+    if not template_path.exists():
+        return None
+    return template_path.read_text(encoding="utf-8")
+
+
+def _extract_template_roots(template_text: str) -> Set[str]:
+    try:
+        from jinja2 import Environment, meta
+    except ImportError:
+        return set()
+
+    env = Environment()
+    parsed = env.parse(template_text)
+    return set(meta.find_undeclared_variables(parsed))
+
+
+def _warn_missing_template_context_keys(template_name: str, template_text: str, context: Dict[str, Any]) -> None:
+    try:
+        from jinja2 import Environment, meta
+    except ImportError:
+        return
+
+    env = Environment()
+    parsed = env.parse(template_text)
+    undeclared = sorted(
+        name
+        for name in meta.find_undeclared_variables(parsed)
+        if name not in context and name not in _ALLOWED_TEMPLATE_ROOTS
+    )
+    if undeclared:
+        logger.warning("Template %s references missing context roots: %s", template_name, ", ".join(undeclared))
+
+
+CONTRACT_FIELD_MAPPING: Dict[str, str] = {
+    "stock_name": "AnalysisResult.stock_name",
+    "sentiment_score": "AnalysisResult.sentiment_score",
+    "trend_prediction": "AnalysisResult.trend_prediction",
+    "operation_advice": "AnalysisResult.operation_advice",
+    "decision_type": "AnalysisResult.decision_type",
+    "confidence_level": "AnalysisResult.confidence_level",
+    "dashboard": "AnalysisResult.dashboard",
+    "analysis_summary": "AnalysisResult.analysis_summary",
+    "key_points": "AnalysisResult.key_points",
+    "risk_warning": "AnalysisResult.risk_warning",
+    "buy_reason": "AnalysisResult.buy_reason",
+    "trend_analysis": "AnalysisResult.trend_analysis",
+    "short_term_outlook": "AnalysisResult.short_term_outlook",
+    "medium_term_outlook": "AnalysisResult.medium_term_outlook",
+    "technical_analysis": "AnalysisResult.technical_analysis",
+    "ma_analysis": "AnalysisResult.ma_analysis",
+    "volume_analysis": "AnalysisResult.volume_analysis",
+    "pattern_analysis": "AnalysisResult.pattern_analysis",
+    "fundamental_analysis": "AnalysisResult.fundamental_analysis",
+    "sector_position": "AnalysisResult.sector_position",
+    "company_highlights": "AnalysisResult.company_highlights",
+    "news_summary": "AnalysisResult.news_summary",
+    "market_sentiment": "AnalysisResult.market_sentiment",
+    "hot_topics": "AnalysisResult.hot_topics",
+    "search_performed": "AnalysisResult.search_performed",
+    "data_sources": "AnalysisResult.data_sources",
+    "prompt_version": "AnalysisResult.prompt_version",
+    "report_language": "AnalysisResult.report_language",
+    "model_used": "AnalysisResult.model_used",
+    "current_price": "AnalysisResult.current_price",
+    "change_pct": "AnalysisResult.change_pct",
+}
+
+
+def _load_contract_field_mapping() -> Dict[str, str]:
+    return dict(CONTRACT_FIELD_MAPPING)
+
+
+def _write_contract_doc(template_names: List[str]) -> None:
+    contract_dir = _resolve_templates_dir().parent / "docs" / "contracts"
+    contract_dir.mkdir(parents=True, exist_ok=True)
+    mapping = _load_contract_field_mapping()
+    lines = [
+        "# Prompt / Result Contract Mapping",
+        "",
+        "This document is generated from current templates and should remain in sync with report templates.",
+        "",
+        "## Template placeholders",
+    ]
+    for template_name in template_names:
+        text = _load_template_text(template_name)
+        if text is None:
+            continue
+        roots = sorted(_extract_template_roots(text))
+        lines.append(f"\n### {template_name}")
+        for root in roots:
+            mapped = mapping.get(root, "(unmapped)")
+            lines.append(f"- `{root}` -> `{mapped}`")
+    lines.extend([
+        "",
+        "## AnalysisResult fields tracked",
+    ])
+    for source in sorted(set(mapping.values())):
+        lines.append(f"- `{source}`")
+    contract_path = contract_dir / "prompt-to-result-mapping.md"
+    contract_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _resolve_templates_dir() -> Path:
@@ -106,6 +269,8 @@ def render(
     if not template_path.exists():
         logger.debug("Report template not found: %s", template_path)
         return None
+    template_text = template_path.read_text(encoding="utf-8")
+    _warn_missing_template_context_keys(template_name, template_text, {"report_date": report_date, "results": results, "summary_only": summary_only, "extra_context": extra_context})
 
     report_language = normalize_report_language(
         (extra_context or {}).get("report_language")
@@ -152,6 +317,10 @@ def render(
 
     mx_enrichment = (extra_context or {}).get("mx_enrichment") if extra_context else None
     portfolio_contexts = (extra_context or {}).get("portfolio_contexts") if extra_context else None
+    candidate_score_map = (extra_context or {}).get("candidate_score_map") if extra_context else None
+    candidate_layer_summary = (extra_context or {}).get("candidate_layer_summary") if extra_context else None
+    if candidate_layer_summary is None and isinstance(candidate_score_map, dict) and candidate_score_map:
+        candidate_layer_summary = build_l2_report_summary(candidate_score_map)
     context: Dict[str, Any] = {
         "portfolio_contexts": portfolio_contexts,
         "report_date": report_date,
@@ -175,6 +344,7 @@ def render(
         "get_result_guardrail_messages": get_result_guardrail_messages,
         "get_result_guardrail_traces": get_result_guardrail_traces,
         "mx_enrichment": mx_enrichment,
+        "candidate_layer_summary": candidate_layer_summary,
         "execution_policy_note": "以下信号为日终分析结果，默认用于次一交易日执行，不代表当晚立即交易。",
     }
     if extra_context:

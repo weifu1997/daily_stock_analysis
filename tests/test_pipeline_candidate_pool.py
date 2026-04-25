@@ -13,6 +13,7 @@ from tests.litellm_stub import ensure_litellm_stub
 
 ensure_litellm_stub()
 
+from src.analyzer import AnalysisResult
 from src.core.pipeline import StockAnalysisPipeline
 
 
@@ -45,6 +46,17 @@ class TestPipelineCandidatePool(unittest.TestCase):
         self.assertEqual(result["original_stock_codes"], ["600519", "000001"])
         self.assertEqual(result["portfolio_pool"], ["000776", "600120"])
         self.assertEqual(result["final_candidate_pool"], ["600519", "000001", "000776", "600120"])
+        self.assertEqual(result["candidate_source_map"]["600519"]["candidate_source"], "mx_preselect")
+        self.assertEqual(result["candidate_source_map"]["600519"]["source_rank"], 1)
+        self.assertEqual(result["candidate_source_map"]["600519"]["source_query"], pipeline.config.mx_preselect_query)
+        self.assertFalse(result["candidate_source_map"]["600519"]["forced_by_portfolio"])
+        self.assertEqual(result["candidate_source_map"]["000776"]["candidate_source"], "portfolio")
+        self.assertTrue(result["candidate_source_map"]["000776"]["forced_by_portfolio"])
+        self.assertEqual(result["candidate_source_map"]["000776"]["pool_reason"], "portfolio_forced_include")
+        self.assertEqual(
+            result["candidate_source_rows"],
+            [result["candidate_source_map"][code] for code in result["final_candidate_pool"]],
+        )
         self.assertEqual(
             pipeline.candidate_enrichment_service.enrich_candidates.call_count,
             1,
@@ -66,6 +78,9 @@ class TestPipelineCandidatePool(unittest.TestCase):
         self.assertFalse(result["mx_xuangu_enabled"])
         self.assertTrue(result["fallback_used"])
         self.assertEqual(result["final_candidate_pool"], ["600519", "000001", "000776", "600120"])
+        self.assertEqual(result["candidate_source_map"]["600519"]["candidate_source"], "fallback_original")
+        self.assertTrue(result["candidate_source_map"]["600519"]["fallback_used"])
+        self.assertEqual(result["candidate_source_map"]["600519"]["pool_reason"], "mx_unavailable_or_failed")
         self.candidate_enrichment_service = pipeline.candidate_enrichment_service
         self.candidate_enrichment_service.enrich_candidates.assert_not_called()
 
@@ -88,6 +103,20 @@ class TestPipelineCandidatePool(unittest.TestCase):
         self.assertFalse(result["fallback_used"])
         self.assertEqual(result["mx_candidate_pool"], ["600519", "000001", "000776", "600120"])
         self.assertEqual(result["final_candidate_pool"], ["600519", "000001", "000776", "600120"])
+
+    def test_report_extra_context_includes_l3_execution_plan_map(self):
+        pipeline = self._build_pipeline(mx_enabled=True, mx_priority=True, mx_limit=10)
+        pipeline._build_portfolio_context_map = MagicMock(return_value={})
+        pipeline._build_report_quality_context_map = MagicMock(return_value={})
+        pipeline._build_report_decision_context_map = MagicMock(return_value={})
+        result = AnalysisResult(code="605305", name="中际联合", sentiment_score=74, trend_prediction="看多", operation_advice="买入")
+        result.candidate_layer_score = {"score": 19, "trade_bias": "right_side_candidate"}
+
+        context = pipeline._build_report_extra_context([result])
+
+        self.assertIn("execution_plan_map", context)
+        self.assertTrue(context["execution_plan_map"]["605305"]["eligible_for_l3"])
+        self.assertEqual(context["execution_plan_map"]["605305"]["hard_stop_loss_pct"], -8)
 
 
 if __name__ == "__main__":

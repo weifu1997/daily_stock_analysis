@@ -39,6 +39,8 @@ from src.report_language import (
 from src.search_service import SearchService
 from src.services.social_sentiment_service import SocialSentimentService
 from src.services.candidate_enrichment import CandidateEnrichmentService
+from src.services.candidate_scoring_service import CandidateScoringService
+from src.analysis.execution import build_execution_plan_map
 
 
 @dataclass
@@ -124,6 +126,7 @@ class StockAnalysisPipeline:
         self.fetcher_manager = DataFetcherManager()
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
         self.trend_analyzer = StockTrendAnalyzer()  # 技术分析器
+        self.candidate_scoring_service = CandidateScoringService()
         self.analyzer = GeminiAnalyzer(config=self.config)
         self.notifier = NotificationService(source_message=source_message)
         self._single_stock_notify_lock = threading.Lock()
@@ -547,6 +550,17 @@ class StockAnalysisPipeline:
         )
         if technical_factor_summary is not None:
             enhanced_context['technical_factor_summary'] = technical_factor_summary
+        candidate_source = getattr(inputs, "candidate_source", None)
+        if candidate_source is not None:
+            enhanced_context['candidate_source'] = candidate_source
+
+        candidate_layer_score = self._build_candidate_layer_score(
+            code=code,
+            stock_name=stock_name,
+            inputs=inputs,
+        )
+        if candidate_layer_score:
+            enhanced_context['candidate_layer_score'] = candidate_layer_score
 
         # Step 7: LLM 分析
         llm_progress_state = {"last_progress": 64}
@@ -586,6 +600,7 @@ class StockAnalysisPipeline:
             realtime_data = enhanced_context.get('realtime', {})
             result.current_price = realtime_data.get('price')
             result.change_pct = realtime_data.get('change_pct')
+            result.candidate_layer_score = candidate_layer_score
 
         if result and inputs.chip_data:
             fill_chip_structure_if_needed(result, inputs.chip_data)
@@ -671,6 +686,13 @@ class StockAnalysisPipeline:
         try:
             self._emit_progress(18, f"{code}：正在获取行情与筹码数据")
             inputs = self._collect_analysis_inputs(code, query_id=query_id, current_time=current_time)
+            candidate_source_map = getattr(self, "_candidate_source_map", {}) or {}
+            candidate_source = candidate_source_map.get(normalize_stock_code(code)) or candidate_source_map.get(code)
+            if candidate_source is not None:
+                try:
+                    setattr(inputs, "candidate_source", candidate_source)
+                except Exception:
+                    pass
             stock_name = inputs.stock_name
 
             self._emit_progress(32, f"{stock_name}：正在聚合基本面与趋势数据")
@@ -692,6 +714,33 @@ class StockAnalysisPipeline:
             logger.exception(f"{stock_name}({code}) 详细错误信息:")
             return None
     
+    def _build_candidate_layer_score(
+        self,
+        *,
+        code: str,
+        stock_name: str,
+        inputs: _AnalysisInputs,
+    ) -> Optional[Dict[str, Any]]:
+        """Build deterministic L2 candidate score for report/context only."""
+        try:
+            scorer = getattr(self, "candidate_scoring_service", None)
+            if scorer is None:
+                scorer = CandidateScoringService()
+                self.candidate_scoring_service = scorer
+            score = scorer.score_candidate(
+                code=code,
+                name=stock_name,
+                daily_df=inputs.daily_df,
+                trend_result=inputs.trend_result,
+                fundamental_context=inputs.fundamental_context,
+                realtime_quote=inputs.realtime_quote,
+                portfolio_context=inputs.portfolio_context,
+            )
+            return score.to_dict()
+        except Exception as e:
+            logger.warning("[%s] 构建 candidate_layer_score 失败（fail-open）: %s", code, e, exc_info=True)
+            return None
+
     def _build_technical_factor_summary_for_analysis(
         self,
         stock_code: str,
@@ -1397,12 +1446,20 @@ class StockAnalysisPipeline:
         """
         构建分析上下文快照
         """
-        return {
+        snapshot = {
             "enhanced_context": enhanced_context,
             "news_content": news_content,
             "realtime_quote_raw": self._safe_to_dict(realtime_quote),
             "chip_distribution_raw": self._safe_to_dict(chip_data),
         }
+        candidate_source = enhanced_context.get("candidate_source") if isinstance(enhanced_context, dict) else None
+        if candidate_source is not None:
+            snapshot["candidate_source"] = candidate_source
+        candidate_source_map = getattr(self, "_candidate_source_map", None)
+        if isinstance(candidate_source_map, dict) and candidate_source_map:
+            snapshot["candidate_source_map"] = candidate_source_map
+            snapshot["l1_candidate_source_map"] = candidate_source_map
+        return snapshot
 
     @staticmethod
     def _resolve_resume_target_date(
@@ -1684,6 +1741,15 @@ class StockAnalysisPipeline:
 
         return quality_map
 
+    def _build_candidate_score_context_map(self, results: List[AnalysisResult]) -> Dict[str, Dict[str, Any]]:
+        """Build per-stock L2 candidate score map for report rendering."""
+        score_map: Dict[str, Dict[str, Any]] = {}
+        for result in results or []:
+            payload = getattr(result, "candidate_layer_score", None)
+            if isinstance(payload, dict):
+                score_map[result.code] = payload
+        return score_map
+
     def _build_report_decision_context_map(self, results: List[AnalysisResult]) -> Dict[str, Dict[str, Any]]:
         """Build per-stock decision context from existing runtime data.
 
@@ -1726,11 +1792,17 @@ class StockAnalysisPipeline:
 
         return decision_map
 
+    def _build_execution_plan_context_map(self, results: List[AnalysisResult]) -> Dict[str, Dict[str, Any]]:
+        """Build per-stock L3 execution plan map for report rendering."""
+        return build_execution_plan_map(results)
+
     def _build_report_extra_context(self, results: List[AnalysisResult]) -> Dict[str, Any]:
         """Build extra_context shared by render/save/push paths."""
         return {
             "portfolio_contexts": self._build_portfolio_context_map(results),
             "report_quality_map": self._build_report_quality_context_map(results),
+            "candidate_score_map": self._build_candidate_score_context_map(results),
+            "execution_plan_map": self._build_execution_plan_context_map(results),
             "report_decision_map": self._build_report_decision_context_map(results),
         }
 
@@ -1780,13 +1852,13 @@ class StockAnalysisPipeline:
         mx_source = "fallback_original"
         mx_candidate_pool = list(normalized_original)
         fallback_used = True
+        query_text = (getattr(self.config, "mx_preselect_query", None) or "").strip()
+        profile = (getattr(self.config, "mx_preselect_profile", None) or "").strip().lower()
 
         mx_xuangu_pool: List[str] = []
         if mx_enabled and normalized_original:
             try:
                 preselect_limit = int(getattr(self.config, "mx_preselect_limit", 50) or 50)
-                profile = (getattr(self.config, "mx_preselect_profile", None) or "").strip().lower()
-                query_text = (getattr(self.config, "mx_preselect_query", None) or "").strip()
                 mx_input_rows = [{"code": code, "name": ""} for code in normalized_original]
                 enriched_rows = self.candidate_enrichment_service.enrich_candidates(mx_input_rows)
 
@@ -1848,6 +1920,39 @@ class StockAnalysisPipeline:
             if code and code not in final_pool:
                 final_pool.append(code)
 
+        candidate_source_map: Dict[str, Dict[str, Any]] = {}
+        source_profile = "env_query" if query_text else (f"env_profile:{profile}" if profile else "")
+        original_rank = {code: idx + 1 for idx, code in enumerate(normalized_original)}
+        mx_rank = {code: idx + 1 for idx, code in enumerate(mx_xuangu_pool or mx_candidate_pool)}
+        for code in final_pool:
+            forced_by_portfolio = code in portfolio_pool
+            if forced_by_portfolio:
+                candidate_source = "portfolio"
+                pool_reason = "portfolio_forced_include"
+                rank = None
+            elif mx_source == "mx_preselect" and code in mx_xuangu_pool:
+                candidate_source = "mx_preselect"
+                pool_reason = "mx_xuangu_selected"
+                rank = mx_rank.get(code)
+            elif mx_source == "mx_empty_result":
+                candidate_source = "fallback_original"
+                pool_reason = "mx_empty_result_keep_original"
+                rank = original_rank.get(code)
+            else:
+                candidate_source = "fallback_original"
+                pool_reason = "mx_unavailable_or_failed"
+                rank = original_rank.get(code)
+            candidate_source_map[code] = {
+                "code": code,
+                "candidate_source": candidate_source,
+                "source_query": query_text if candidate_source == "mx_preselect" else "",
+                "source_profile": source_profile if candidate_source == "mx_preselect" else "",
+                "source_rank": rank,
+                "pool_reason": pool_reason,
+                "forced_by_portfolio": forced_by_portfolio,
+                "fallback_used": fallback_used,
+            }
+
         logger.info(
             "[pipeline] candidate pool built: original=%d, mx_xuangu=%d, portfolio=%d, final=%d, mx_enabled=%s, fallback=%s, reason=%s",
             len(normalized_original),
@@ -1874,6 +1979,8 @@ class StockAnalysisPipeline:
             "mx_xuangu_reason": mx_reason,
             "mx_xuangu_source": mx_source,
             "portfolio_forced_included": bool(portfolio_pool),
+            "candidate_source_map": candidate_source_map,
+            "candidate_source_rows": [candidate_source_map[code] for code in final_pool if code in candidate_source_map],
             "fallback_used": fallback_used,
             "dry_run": dry_run,
         }
@@ -1915,6 +2022,7 @@ class StockAnalysisPipeline:
             return []
 
         candidate_bundle = self._build_candidate_pool(stock_codes, dry_run=dry_run)
+        self._candidate_source_map = candidate_bundle.get("candidate_source_map") or {}
         stock_codes = candidate_bundle.get("final_candidate_pool") or []
 
         if not stock_codes:

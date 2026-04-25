@@ -5,6 +5,34 @@
 
 ## 📊 {{ labels.summary_heading }}
 
+{% if candidate_layer_summary %}
+### 🧮 {{ 'L2候选池分布' if report_language != 'en' else 'L2 Candidate Distribution' }}
+
+> {{ '样本' if report_language != 'en' else 'Samples' }} {{ candidate_layer_summary.get('total', 0) }} | {{ '强候选' if report_language != 'en' else 'Strong' }} {{ candidate_layer_summary.get('strong_count', 0) }} | {{ '观察' if report_language != 'en' else 'Watch' }} {{ candidate_layer_summary.get('watch_count', 0) }} | {{ '排除' if report_language != 'en' else 'Excluded' }} {{ candidate_layer_summary.get('excluded_count', 0) }} | {{ '右侧候选' if report_language != 'en' else 'Right-side' }} {{ candidate_layer_summary.get('right_side_count', 0) }}
+
+{{ '分档' if report_language != 'en' else 'Buckets' }}: {{ candidate_layer_summary.get('bucket_text', 'N/A') }}
+{% if candidate_layer_summary.get('top_risk_flags') %}
+
+{{ '主要风险' if report_language != 'en' else 'Top Risks' }}: {% for risk_item in candidate_layer_summary.get('top_risk_flags')[:3] %}{{ risk_item.get('flag') }}({{ risk_item.get('count') }}){% if not loop.last %}；{% endif %}{% endfor %}
+{% endif %}
+{% if candidate_layer_summary.get('near_strong_candidates') %}
+
+#### {{ '近强候选复盘' if report_language != 'en' else 'Near-strong Review' }}
+
+{% for item in candidate_layer_summary.get('near_strong_candidates')[:5] %}
+- {{ item.get('name') or item.get('code') }}({{ item.get('code') }})：{{ item.get('score') }}分，{{ '差' if report_language != 'en' else 'gap ' }}{{ item.get('gap_to_strong') }}{{ '分' if report_language != 'en' else ' pts' }}；{{ '卡点' if report_language != 'en' else 'blockers' }}：{{ (item.get('blocking_reasons') or [])|join('；') }}
+{% endfor %}
+{% endif %}
+{% if candidate_layer_summary.get('near_strong_blocker_categories') %}
+
+{{ '卡点分类' if report_language != 'en' else 'Blocker Categories' }}: {% for item in candidate_layer_summary.get('near_strong_blocker_categories')[:5] %}{{ item.get('category') }}({{ item.get('count') }}){% if not loop.last %}；{% endif %}{% endfor %}
+{% endif %}
+{% if candidate_layer_summary.get('tuning_suggestion') %}
+
+{{ '调参建议' if report_language != 'en' else 'Tuning Note' }}: {{ candidate_layer_summary.get('tuning_suggestion').get('text') }}
+{% endif %}
+{% endif %}
+
 {% for e in enriched %}
 {{ e.signal_emoji }} **{{ e.stock_name }}({{ e.result.code }})**: {{ e.localized_operation_advice }} | {{ labels.score_label }} {{ e.result.sentiment_score }} | {{ e.localized_trend_prediction }}
 {% endfor %}
@@ -100,6 +128,56 @@
 {% set portfolio_context = (portfolio_contexts or {}).get(result.code) if portfolio_contexts else None %}
 {% if portfolio_context and portfolio_context.get('has_position') %}
 **📌 持仓快照**: {% if portfolio_context.get('quantity') is not none %}数量 {{ portfolio_context.get('quantity') }}{% endif %}{% if portfolio_context.get('cost_basis') is not none %} | 成本 {{ portfolio_context.get('cost_basis') }}{% endif %}{% if portfolio_context.get('unrealized_pnl') is not none %} | 浮盈亏 {{ portfolio_context.get('unrealized_pnl') }}{% endif %}{% if portfolio_context.get('valuation_currency') %} | 币种 {{ portfolio_context.get('valuation_currency') }}{% endif %}
+{% endif %}
+
+{% set candidate_score = (candidate_score_map or {}).get(result.code) if candidate_score_map else None %}
+{% if candidate_score %}
+### 🧮 {{ '候选二筛' if report_language != 'en' else 'Candidate L2 Screen' }}
+
+| {{ '项目' if report_language != 'en' else 'Item' }} | {{ '内容' if report_language != 'en' else 'Content' }} |
+|---------|------|
+| {{ '评级' if report_language != 'en' else 'Rating' }} | {{ candidate_score.get('rating', 'N/A') }} |
+| {{ '二筛分' if report_language != 'en' else 'L2 Score' }} | {{ candidate_score.get('score', 'N/A') }} |
+| {{ '交易偏向' if report_language != 'en' else 'Trade Bias' }} | {{ candidate_score.get('trade_bias', 'watch') }} |
+| {{ '核心逻辑' if report_language != 'en' else 'Core Logic' }} | {{ candidate_score.get('core_logic', 'N/A') }} |
+| {{ '风险标记' if report_language != 'en' else 'Risk Flags' }} | {{ (candidate_score.get('risk_flags') or [])|join('；') if report_language != 'en' else (candidate_score.get('risk_flags') or [])|join('; ') }} |
+{% if candidate_score.get('no_trade_reason') %}
+| {{ '不交易原因' if report_language != 'en' else 'No-trade Reason' }} | {{ candidate_score.get('no_trade_reason') }} |
+{% endif %}
+{% if candidate_score.get('entry_hint') %}
+| {{ '右侧提示' if report_language != 'en' else 'Entry Hint' }} | {{ candidate_score.get('entry_hint') }} |
+{% endif %}
+{% if candidate_score.get('exclude_reason') %}
+| {{ '排除原因' if report_language != 'en' else 'Exclude Reason' }} | {{ candidate_score.get('exclude_reason') }} |
+{% endif %}
+{% set factor_breakdown = candidate_score.get('factor_breakdown') or [] %}
+{% if factor_breakdown %}
+
+#### {{ '评分拆解' if report_language != 'en' else 'Factor Breakdown' }}
+
+| {{ '因子' if report_language != 'en' else 'Factor' }} | {{ '得分' if report_language != 'en' else 'Score' }} | {{ '说明' if report_language != 'en' else 'Note' }} |
+|---------|------|------|
+{% for factor in factor_breakdown %}
+| {{ factor.get('label', factor.get('key', 'N/A')) }} | {{ factor.get('score', 'N/A') }} | {{ factor.get('note', '') }} |
+{% endfor %}
+{% endif %}
+{% endif %}
+
+{% set execution_plan = (execution_plan_map or {}).get(result.code) if execution_plan_map else None %}
+{% if execution_plan and execution_plan.get('eligible_for_l3') %}
+### 🎛️ {{ 'L3执行计划' if report_language != 'en' else 'L3 Execution Plan' }}
+
+| {{ '项目' if report_language != 'en' else 'Item' }} | {{ '内容' if report_language != 'en' else 'Content' }} |
+|---------|------|
+| {{ '动作' if report_language != 'en' else 'Action' }} | {{ '观察入场，不自动买入' if report_language != 'en' else 'Watch for entry; no auto-buy' }} |
+| {{ '入场条件' if report_language != 'en' else 'Entry Condition' }} | {{ execution_plan.get('entry_condition', 'N/A') }} |
+| {{ '初始仓位' if report_language != 'en' else 'Initial Position' }} | {{ '初始1/3目标仓位' if report_language != 'en' else '1/3 target position' }} |
+| {{ '单票上限' if report_language != 'en' else 'Single-stock Cap' }} | {{ '单票上限10%' if report_language != 'en' else '10% max single-stock weight' }} |
+| {{ '硬止损' if report_language != 'en' else 'Hard Stop' }} | {{ execution_plan.get('hard_stop_loss_pct', 'N/A') }}% |
+| {{ '时间止损' if report_language != 'en' else 'Time Stop' }} | {{ execution_plan.get('time_stop_days', 'N/A') }}{{ '个交易日' if report_language != 'en' else ' trading days' }} |
+{% if execution_plan.get('risk_notes') %}
+| {{ '纪律备注' if report_language != 'en' else 'Discipline Notes' }} | {{ (execution_plan.get('risk_notes') or [])|join('；') if report_language != 'en' else (execution_plan.get('risk_notes') or [])|join('; ') }} |
+{% endif %}
 {% endif %}
 
 {% set report_quality = (report_quality_map or {}).get(result.code) if report_quality_map else None %}
