@@ -579,6 +579,8 @@ class StockAnalysisPipeline:
             progress_callback=self._emit_progress,
             stream_progress_callback=_on_llm_stream,
         )
+        if result is not None:
+            result.candidate_layer_score = candidate_layer_score
         normalization_report = normalize_analysis_result(
             result,
             AnalysisNormalizationContext(portfolio_context=inputs.portfolio_context),
@@ -600,7 +602,6 @@ class StockAnalysisPipeline:
             realtime_data = enhanced_context.get('realtime', {})
             result.current_price = realtime_data.get('price')
             result.change_pct = realtime_data.get('change_pct')
-            result.candidate_layer_score = candidate_layer_score
 
         if result and inputs.chip_data:
             fill_chip_structure_if_needed(result, inputs.chip_data)

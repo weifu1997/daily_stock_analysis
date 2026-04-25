@@ -469,6 +469,59 @@ def test_normalize_analysis_result_returns_report_summary() -> None:
     assert any(record.reason_code == "decision_signal_normalized" for record in report.applied_rules if record.changed)
     assert result.to_dict()["normalization_report"]["changed_rule_count"] >= 1
 
+def test_pipeline_sets_candidate_layer_score_before_normalization_gate() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from src.core.pipeline import StockAnalysisPipeline
+
+    pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+    pipeline._emit_progress = MagicMock()
+    pipeline.analyzer = MagicMock()
+    pipeline.analyzer.analyze.return_value = AnalysisResult(
+        code="002138",
+        name="顺络电子",
+        sentiment_score=68,
+        trend_prediction="看多",
+        operation_advice="买入",
+        decision_type="buy",
+    )
+    pipeline._build_candidate_layer_score = MagicMock(return_value={"score": 11, "trade_bias": "watch", "rating": "★★★☆☆ 关注"})
+
+    inputs = SimpleNamespace(
+        stock_name="顺络电子",
+        realtime_quote=None,
+        chip_data=None,
+        fundamental_context=None,
+        trend_result=None,
+        portfolio_context=None,
+        current_price=35.23,
+        daily_df=None,
+        daily_source="test",
+    )
+    context = {"code": "002138", "realtime": {"price": 35.23, "change_pct": 0.1}}
+
+    pipeline.config = SimpleNamespace()
+    pipeline.search_service = None
+    pipeline.social_sentiment_service = None
+    pipeline.db = MagicMock()
+    pipeline.db.get_analysis_context.return_value = context
+    pipeline._build_technical_factor_summary_for_analysis = MagicMock(return_value=None)
+    pipeline._enhance_context = MagicMock(return_value=context)
+
+    result = pipeline._run_traditional_analysis(
+        code="002138",
+        report_type=None,
+        query_id="test-query",
+        inputs=inputs,
+    )
+
+    assert result.decision_type == "hold"
+    assert result.operation_advice == "持有"
+    assert result.candidate_layer_score["score"] == 11
+    assert "l2_candidate_gate_buy_blocked" in result.normalization_report["reason_codes"]
+
+
 def test_normalization_l2_gate_blocks_buy_below_near_strong_threshold() -> None:
     result = AnalysisResult(
         code="002138",
