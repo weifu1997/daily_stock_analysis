@@ -16,7 +16,7 @@ import math
 import re
 import time
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List, Tuple, Callable
+from typing import Optional, Dict, Any, List, Tuple, Callable, cast
 
 import litellm
 from json_repair import repair_json
@@ -49,6 +49,10 @@ from src.schemas.report_schema import AnalysisReportSchema
 from src.market_context import get_market_role, get_market_guidelines
 
 logger = logging.getLogger(__name__)
+
+PROMPT_VERSION = "1.0.0"
+
+
 
 from src.analyzer_helpers import (  # noqa: E402 - keep backward-compatible module surface
     _CHIP_KEYS,
@@ -131,6 +135,8 @@ class AnalysisResult:
     success: bool = True
     error_message: Optional[str] = None
     normalization_report: Optional[Dict[str, Any]] = None
+    candidate_layer_score: Optional[Dict[str, Any]] = None  # L2 候选二筛评分（只解释，不直接改交易建议）
+    execution_plan: Optional[Dict[str, Any]] = None  # L3 执行计划（观察入场/账户约束，入库留痕）
 
     # ========== 价格数据（分析时快照）==========
     current_price: Optional[float] = None  # 分析时的股价
@@ -141,6 +147,7 @@ class AnalysisResult:
 
     # ========== 历史对比（Report Engine P0）==========
     query_id: Optional[str] = None  # 本次分析 query_id，用于历史对比时排除本次记录
+    prompt_version: Optional[str] = None  # 模板版本号（用于契约追踪）
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -176,42 +183,55 @@ class AnalysisResult:
             'success': self.success,
             'error_message': self.error_message,
             'normalization_report': self.normalization_report,
+            'candidate_layer_score': self.candidate_layer_score,
+            'execution_plan': self.execution_plan,
             'current_price': self.current_price,
             'change_pct': self.change_pct,
             'model_used': self.model_used,
+            'prompt_version': self.prompt_version,
         }
 
     def get_core_conclusion(self) -> str:
         """获取核心结论（一句话）"""
         if self.dashboard and 'core_conclusion' in self.dashboard:
-            return self.dashboard['core_conclusion'].get('one_sentence', self.analysis_summary)
-        return self.analysis_summary
+            value = self.dashboard['core_conclusion'].get('one_sentence', self.analysis_summary)
+            return str(value) if value is not None else self.analysis_summary
+        return self.analysis_summary or ""
 
     def get_position_advice(self, has_position: bool = False) -> str:
         """获取持仓建议"""
         if self.dashboard and 'core_conclusion' in self.dashboard:
             pos_advice = self.dashboard['core_conclusion'].get('position_advice', {})
-            if has_position:
-                return pos_advice.get('has_position', self.operation_advice)
-            return pos_advice.get('no_position', self.operation_advice)
-        return self.operation_advice
+            if isinstance(pos_advice, dict):
+                if has_position:
+                    value = pos_advice.get('has_position', self.operation_advice)
+                else:
+                    value = pos_advice.get('no_position', self.operation_advice)
+                return str(value) if value is not None else self.operation_advice
+        return self.operation_advice or ""
 
     def get_sniper_points(self) -> Dict[str, str]:
         """获取狙击点位"""
         if self.dashboard and 'battle_plan' in self.dashboard:
-            return self.dashboard['battle_plan'].get('sniper_points', {})
+            points = self.dashboard['battle_plan'].get('sniper_points', {})
+            if isinstance(points, dict):
+                return {str(k): str(v) for k, v in points.items() if v is not None}
         return {}
 
     def get_checklist(self) -> List[str]:
         """获取检查清单"""
         if self.dashboard and 'battle_plan' in self.dashboard:
-            return self.dashboard['battle_plan'].get('action_checklist', [])
+            items = self.dashboard['battle_plan'].get('action_checklist', [])
+            if isinstance(items, list):
+                return [str(item) for item in items if item is not None]
         return []
 
     def get_risk_alerts(self) -> List[str]:
         """获取风险警报"""
         if self.dashboard and 'intelligence' in self.dashboard:
-            return self.dashboard['intelligence'].get('risk_alerts', [])
+            items = self.dashboard['intelligence'].get('risk_alerts', [])
+            if isinstance(items, list):
+                return [str(item) for item in items if item is not None]
         return []
 
     def get_emoji(self) -> str:
@@ -587,7 +607,7 @@ class GeminiAnalyzer:
         self._default_skill_policy_override = default_skill_policy
         self._use_legacy_default_prompt_override = use_legacy_default_prompt
         self._resolved_prompt_state: Optional[Dict[str, Any]] = None
-        self._router = None
+        self._router: Optional[Router] = None
         self._litellm_available = False
         self._init_litellm()
         if not self._litellm_available:
@@ -957,7 +977,7 @@ class GeminiAnalyzer:
 
         use_channel_router = self._has_channel_config(config)
 
-        last_error = None
+        last_error: Optional[Exception] = None
         effective_system_prompt = system_prompt or self.TEXT_SYSTEM_PROMPT
         router_model_names = set(get_configured_llm_models(config.llm_model_list))
         for model in models_to_try:
@@ -1134,6 +1154,7 @@ class GeminiAnalyzer:
                 error_message='LLM API key is not configured' if report_language == "en" else 'LLM API Key 未配置',
                 model_used=None,
                 report_language=report_language,
+                prompt_version=PROMPT_VERSION,
             )
         
         try:
@@ -1251,8 +1272,9 @@ class GeminiAnalyzer:
                 error_message=str(e),
                 model_used=None,
                 report_language=report_language,
+                prompt_version=PROMPT_VERSION,
             )
-    
+
     def _build_data_input_prompt(
         self,
         context: Dict[str, Any],
@@ -2116,6 +2138,7 @@ context: Dict[str, Any],
                     search_performed=data.get('search_performed', False),
                     data_sources=data.get('data_sources', 'Technical data' if report_language == "en" else '技术面数据'),
                     success=True,
+                    prompt_version=PROMPT_VERSION,
                 )
             else:
                 # 没有找到 JSON，标记为失败
@@ -2201,6 +2224,7 @@ context: Dict[str, Any],
             success=False,
             error_message='LLM response is not valid JSON; analysis result will not be persisted',
             report_language=report_language,
+            prompt_version=PROMPT_VERSION,
         )
     
     def batch_analyze(

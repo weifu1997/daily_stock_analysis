@@ -730,7 +730,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
                     title=item.get('title', ''),
                     snippet=snippet[:1000], # 限制总长度
                     url=link,
-                    source=item.get('source', self._extract_domain(link)),
+                    source=item.get('source') or self._extract_domain(link),
                     published_date=SearchService.extract_date_value(item),
                     extra={"raw_key_summary": SearchService._summarize_raw_keys(item)},
                 ))
@@ -752,6 +752,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
                 error_message=error_msg
             )
     
+    @classmethod
     def _normalize_organic_text(cls, value: Any) -> str:
         """标准化 SerpAPI organic 文本字段。"""
         text = "" if value is None else str(value)

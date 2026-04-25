@@ -2,6 +2,14 @@
 
 > {{ results|length }} {{ labels.stock_unit }} | 🟢{{ labels.buy_label }}:{{ buy_count }} 🟡{{ labels.watch_label }}:{{ hold_count }} 🔴{{ labels.sell_label }}:{{ sell_count }}
 
+{% if candidate_layer_summary %}
+🧮 {{ 'L2候选池分布' if report_language != 'en' else 'L2 Candidate Distribution' }}: {{ '强候选' if report_language != 'en' else 'Strong' }} {{ candidate_layer_summary.get('strong_count', 0) }} / {{ '观察' if report_language != 'en' else 'Watch' }} {{ candidate_layer_summary.get('watch_count', 0) }} / {{ '排除' if report_language != 'en' else 'Excluded' }} {{ candidate_layer_summary.get('excluded_count', 0) }} / {{ '右侧' if report_language != 'en' else 'Right-side' }} {{ candidate_layer_summary.get('right_side_count', 0) }}
+{% if candidate_layer_summary.get('top_risk_flags') %}   • {{ '主要风险' if report_language != 'en' else 'Top Risks' }}: {% for risk_item in candidate_layer_summary.get('top_risk_flags')[:3] %}{{ risk_item.get('flag') }}({{ risk_item.get('count') }}){% if not loop.last %}；{% endif %}{% endfor %}
+{% endif %}{% if candidate_layer_summary.get('near_strong_candidates') %}   • {{ '近强候选' if report_language != 'en' else 'Near-strong' }}: {% for item in candidate_layer_summary.get('near_strong_candidates')[:3] %}{{ item.get('name') or item.get('code') }}{{ item.get('score') }}分/差{{ item.get('gap_to_strong') }}分{% if not loop.last %}；{% endif %}{% endfor %}
+{% endif %}{% if candidate_layer_summary.get('near_strong_blocker_categories') %}   • {{ '卡点分类' if report_language != 'en' else 'Blockers' }}: {% for item in candidate_layer_summary.get('near_strong_blocker_categories')[:3] %}{{ item.get('category') }}({{ item.get('count') }}){% if not loop.last %}；{% endif %}{% endfor %}
+{% endif %}{% if candidate_layer_summary.get('tuning_suggestion') %}   • {{ '调参' if report_language != 'en' else 'Tuning' }}: {{ candidate_layer_summary.get('tuning_suggestion').get('text')[:80] }}
+{% endif %}{% endif %}
+
 {% if summary_only %}
 **📊 {{ labels.summary_heading }}**
 {% for e in enriched %}
@@ -104,6 +112,24 @@
 {% if portfolio_context and portfolio_context.get('has_position') %}
 📌 持仓快照: {% if portfolio_context.get('quantity') is not none %}数量 {{ portfolio_context.get('quantity') }}{% endif %}{% if portfolio_context.get('cost_basis') is not none %} | 成本 {{ portfolio_context.get('cost_basis') }}{% endif %}{% if portfolio_context.get('unrealized_pnl') is not none %} | 浮盈亏 {{ portfolio_context.get('unrealized_pnl') }}{% endif %}
 {% endif %}
+
+{% set candidate_score = (candidate_score_map or {}).get(result.code) if candidate_score_map else None %}
+{% if candidate_score %}
+🧮 {{ '候选二筛' if report_language != 'en' else 'Candidate L2 Screen' }}: {{ candidate_score.get('rating', 'N/A') }} / {{ candidate_score.get('score', 'N/A') }}分
+   • {{ '逻辑' if report_language != 'en' else 'Logic' }}: {{ candidate_score.get('core_logic', 'N/A')[:80] }}
+   • {{ '风险' if report_language != 'en' else 'Risk' }}: {{ ((candidate_score.get('risk_flags') or [])|join('；'))[:80] }}
+{% if candidate_score.get('no_trade_reason') %}   • {{ '不交易' if report_language != 'en' else 'No-trade' }}: {{ candidate_score.get('no_trade_reason')[:80] }}
+{% endif %}{% if candidate_score.get('entry_hint') %}   • {{ '右侧' if report_language != 'en' else 'Entry' }}: {{ candidate_score.get('entry_hint')[:80] }}
+{% endif %}{% endif %}
+
+{% set execution_plan = (execution_plan_map or {}).get(result.code) if execution_plan_map else None %}
+{% if execution_plan and execution_plan.get('eligible_for_l3') %}
+🎛️ {{ 'L3执行计划' if report_language != 'en' else 'L3 Execution Plan' }}: {{ '观察入场，不自动买入' if report_language != 'en' else 'Watch entry; no auto-buy' }}
+   • {{ '入场' if report_language != 'en' else 'Entry' }}: {{ execution_plan.get('entry_condition', 'N/A')[:80] }}
+   • {{ '止损' if report_language != 'en' else 'Stop' }}: {{ execution_plan.get('hard_stop_loss_pct', 'N/A') }}% / {{ execution_plan.get('time_stop_days', 'N/A') }}{{ '个交易日' if report_language != 'en' else ' trading days' }}
+{% set account_constraints = execution_plan.get('account_constraints') or {} %}
+{% if account_constraints %}   • {{ '账户' if report_language != 'en' else 'Account' }}: {{ '计划金额' if report_language != 'en' else 'Planned' }} {{ account_constraints.get('cash_limited_value', 'N/A') }}；{{ '建议股数' if report_language != 'en' else 'Shares' }} {{ account_constraints.get('suggested_shares', 'N/A') }}
+{% endif %}{% endif %}
 
 {% set report_quality = (report_quality_map or {}).get(result.code) if report_quality_map else None %}
 {% if report_quality %}

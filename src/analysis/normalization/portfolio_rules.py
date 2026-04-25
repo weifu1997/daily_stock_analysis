@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from .base_rules import localized_operation_advice_for_signal
 from .models import AnalysisNormalizationContext

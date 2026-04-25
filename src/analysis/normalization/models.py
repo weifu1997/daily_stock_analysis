@@ -11,6 +11,7 @@ class AnalysisNormalizationContext:
     """Runtime normalization inputs that are external to the raw LLM result."""
 
     portfolio_context: Optional[PortfolioContext] = None
+    require_candidate_layer_score: bool = False
 
 
 @dataclass(frozen=True)

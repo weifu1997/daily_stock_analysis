@@ -2,15 +2,23 @@
 
 > {{ results|length }} {{ labels.stock_unit_compact }} | 🟢{{ buy_count }} 🟡{{ hold_count }} 🔴{{ sell_count }}
 
+{% if candidate_layer_summary %}
+🧮 {{ 'L2' if report_language != 'en' else 'L2' }}: {{ '强' if report_language != 'en' else 'Strong' }}{{ candidate_layer_summary.get('strong_count', 0) }} / {{ '观察' if report_language != 'en' else 'Watch' }}{{ candidate_layer_summary.get('watch_count', 0) }} / {{ '排除' if report_language != 'en' else 'Excluded' }}{{ candidate_layer_summary.get('excluded_count', 0) }} / {{ '右侧' if report_language != 'en' else 'Right-side' }}{{ candidate_layer_summary.get('right_side_count', 0) }}
+{% endif %}
+
 {% for e in enriched %}
 {% set dash = e.result.dashboard or {} %}
 {% set core = (dash.get('core_conclusion') or {}) if dash else {} %}
 {% set one = (core.get('one_sentence') or e.result.analysis_summary or '')[:60] %}
 {% set portfolio_context = (portfolio_contexts or {}).get(e.result.code) if portfolio_contexts else None %}
 {% set report_quality = (report_quality_map or {}).get(e.result.code) if report_quality_map else None %}
+{% set candidate_score = (candidate_score_map or {}).get(e.result.code) if candidate_score_map else None %}
 {% set decision_context = (report_decision_map or {}).get(e.result.code) if report_decision_map else None %}
+{% set execution_plan = (execution_plan_map or {}).get(e.result.code) if execution_plan_map else None %}
 **{{ e.stock_name }}({{ e.result.code }})** {{ e.signal_emoji }} {{ e.localized_operation_advice }} | {{ labels.score_label }} {{ e.result.sentiment_score }} | {{ one }}
 {% if decision_context %}↳ {{ '动作' if report_language != 'en' else 'Action' }}: {{ localize_operation_advice(decision_context.get('action', e.result.operation_advice), report_language) }} | {{ '失效' if report_language != 'en' else 'Invalidation' }}: {{ decision_context.get('invalidation_condition', 'N/A') }}{% endif %}
+{% if candidate_score %}↳ {{ '二筛' if report_language != 'en' else 'L2' }}: {{ candidate_score.get('rating', 'N/A') }} / {{ candidate_score.get('score', 'N/A') }}{% endif %}
+{% if execution_plan and execution_plan.get('eligible_for_l3') %}↳ {{ 'L3' if report_language != 'en' else 'L3' }}: {{ '观察入场' if report_language != 'en' else 'Watch entry' }} / {{ execution_plan.get('entry_condition', 'N/A') }} / {{ '止损' if report_language != 'en' else 'stop' }}{{ execution_plan.get('hard_stop_loss_pct', 'N/A') }}%{% endif %}
 {% if report_quality %}↳ {{ '可信度' if report_language != 'en' else 'Reliability' }}: {{ report_quality.get('report_reliability', 'N/A') }}{% endif %}{% if portfolio_context and portfolio_context.get('has_position') %} | {{ '持仓数量' if report_language != 'en' else 'Qty' }} {{ portfolio_context.get('quantity', 'N/A') }}{% endif %}
 {% endfor %}
 

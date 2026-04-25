@@ -342,3 +342,49 @@ class TestFillChipStructureIfNeeded(unittest.TestCase):
         self.assertEqual(cs["source_category"], "real")
         self.assertFalse(cs["is_estimated"])
         self.assertEqual(cs["data_reliability"], "real_chip")
+
+    def test_mixed_estimated_source_is_overridden_when_real_chip_data_exists(self) -> None:
+        result = self._make_result(
+            dashboard={
+                "data_perspective": {
+                    "chip_structure": {
+                        "source": "akshare/estimated_ohlcv",
+                        "source_category": "real",
+                        "is_estimated": False,
+                        "data_reliability": "real_chip",
+                    }
+                }
+            }
+        )
+        chip = ChipDistribution(code="600519", source="tushare_cyq_perf", profit_ratio=0.67)
+
+        fill_chip_structure_if_needed(result, chip)
+
+        cs = result.dashboard["data_perspective"]["chip_structure"]
+        self.assertEqual(cs["source"], "tushare_cyq_perf")
+        self.assertEqual(cs["source_category"], "real")
+        self.assertFalse(cs["is_estimated"])
+        self.assertEqual(cs["data_reliability"], "real_chip")
+
+    def test_bare_akshare_source_is_overridden_when_real_chip_data_exists(self) -> None:
+        result = self._make_result(
+            dashboard={
+                "data_perspective": {
+                    "chip_structure": {
+                        "source": "akshare",
+                        "source_category": "real",
+                        "is_estimated": False,
+                        "data_reliability": "real_chip",
+                    }
+                }
+            }
+        )
+        chip = ChipDistribution(code="600519", source="tushare_cyq_perf", profit_ratio=0.67)
+
+        fill_chip_structure_if_needed(result, chip)
+
+        cs = result.dashboard["data_perspective"]["chip_structure"]
+        self.assertEqual(cs["source"], "tushare_cyq_perf")
+        self.assertEqual(cs["source_category"], "real")
+        self.assertFalse(cs["is_estimated"])
+        self.assertEqual(cs["data_reliability"], "real_chip")

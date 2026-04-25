@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] 新增候选池 L2 二筛旁路评分服务，基于日线、趋势与基本面生成可复盘的评分/评级/风险标记，并在报告模板中展示；不改变候选池、operation_advice 或 moni_plan。
+- [改进] L2 候选二筛新增评分拆解、右侧提示与不交易原因展示，区分“值得观察”和“可以买入”。
+- [改进] 新增 L2 分数分布验证工具 `tools/l2_score_distribution.py`，可基于本地历史库批量重算候选二筛并输出分档、风险标记和因子均值。
+- [改进] 日报/微信/简报顶部新增 L2 候选池分布摘要，展示强候选、观察、排除、右侧候选数量、近强候选清单、卡点分类、只读调参建议及主要风险。
+- [改进] 新增 L2 生产观察台账工具 `tools/l2_observation_ledger.py`，按交易日生成 `reports/l2_observation/YYYY-MM-DD.json` 快照并维护 `l2_observation_ledger.csv`，用于后续 3/5/10 日后验跟踪。
+- [改进] L1 候选池新增来源元数据 `candidate_source_map` / `candidate_source_rows`，区分 MX 预选、持仓强制并入、fallback 原始池，并记录 query/profile/rank/reason；来源信息已注入单票 context_snapshot，观察台账可从历史记录读取同名字段。
+- [测试] 补充候选二筛指标、评分服务、可解释性、分布聚合、观察台账、L1 来源追踪与报告摘要回归测试，覆盖短数据降级、低 ROE 降权、高位风险、缺数据 fail-open、评分拆解、旁路展示、分档统计、近强候选复盘与卡点分类。
 - [改进] 重构日报输出结构，新增结论/动作/风险/观察/数据质量分层，并在 markdown / wechat / brief 模板中统一消费运行态决策上下文。
 - [改进] 报告上下文从 LLM schema 中拆出，新增 `report_quality_map` 与 `report_decision_map` 走 `extra_context` 传递，避免把执行结构塞回模型输出。
 - [改进] 报告统一展示质量标签：`report_reliability`、`fallback_used`、`has_real_chip`、`has_valid_news`、`has_market_snapshot`，便于区分真实数据与降级兜底。

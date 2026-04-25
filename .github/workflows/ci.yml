@@ -73,6 +73,9 @@ jobs:
         run: ./scripts/ci_gate.sh flake8
       - name: ✅ Local deterministic checks
         run: ./scripts/ci_gate.sh deterministic
+      - name: 🔎 Mypy type check (allow fail initially)
+        continue-on-error: true
+        run: mypy src/ api/
       - name: ✅ Offline test suite
         run: ./scripts/ci_gate.sh offline-tests
 

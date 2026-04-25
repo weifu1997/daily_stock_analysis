@@ -13,12 +13,15 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.report_language import get_placeholder_text, localize_chip_health
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from src.analyzer import AnalysisResult
 
 
 def _is_gpt5_family_model(model: str) -> bool:
@@ -203,11 +206,25 @@ def _derive_chip_health(profit_ratio: float, concentration_90: float, language: 
 
 def _classify_chip_source(source: Any) -> tuple[str, bool, str]:
     normalized = str(source or "").strip().lower()
-    if not normalized or normalized in {"estimated", "estimated_ohlcv", "fallback", "unknown"}:
+    if not normalized:
         return "estimated", True, "fallback_estimated"
-    if normalized.startswith("estimated"):
+    if normalized in {"estimated", "estimated_ohlcv", "fallback", "unknown"}:
+        return "estimated", True, "fallback_estimated"
+    if "estimated" in normalized or "fallback" in normalized:
         return "estimated", True, "fallback_estimated"
     return "real", False, "real_chip"
+
+
+def _is_chip_source_fallback_like(source: Any) -> bool:
+    normalized = str(source or "").strip().lower()
+    if not normalized:
+        return True
+    return (
+        normalized in {"estimated", "estimated_ohlcv", "fallback", "unknown", "真实", "real", "akshare"}
+        or "estimated" in normalized
+        or "fallback" in normalized
+        or normalized in {"真实/estimated_ohlcv", "tushare_cyq_perf/tushare_cyq_chips", "tushare_cyq_perf/tushare_cyq_chips/akshare/estimated_ohlcv"}
+    )
 
 
 def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dict[str, Any]:
@@ -465,20 +482,9 @@ def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> N
                 merged[raw_key] = filled[raw_key]
         current_source = merged.get("source")
         current_source_category, current_is_estimated, _ = _classify_chip_source(current_source)
-        if current_source in (
-            None,
-            "",
-            "N/A",
-            "n/a",
-            "NA",
-            "na",
-            "数据缺失",
-            "真实",
-            "real",
-            "真实/estimated_ohlcv",
-            "tushare_cyq_perf/tushare_cyq_chips",
-            "tushare_cyq_perf/tushare_cyq_chips/akshare/estimated_ohlcv",
-        ) or (current_is_estimated and filled.get("source_category") == "real"):
+        if _is_chip_source_fallback_like(current_source) or (
+            current_is_estimated and filled.get("source_category") == "real"
+        ):
             merged["source"] = filled.get("source", "estimated")
             merged["source_category"] = filled.get("source_category", current_source_category)
             merged["is_estimated"] = filled.get("is_estimated", current_is_estimated)

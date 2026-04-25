@@ -56,6 +56,18 @@ def _normalize_code(value: Any) -> str:
     return raw
 
 
+def _resolve_lot_size(stock_code: Optional[str]) -> Optional[int]:
+    raw = str(stock_code or "").strip().lower()
+    if not raw:
+        return A_SHARE_LOT_SIZE
+    normalized = _normalize_code(raw)
+    if raw.startswith(("hk", "0")) and (raw.startswith("hk") or ".hk" in raw):
+        return None
+    if normalized.isdigit() and len(normalized) == 6:
+        return A_SHARE_LOT_SIZE
+    return 1
+
+
 def _find_position(portfolio_snapshot: Optional[Dict[str, Any]], stock_code: Optional[str]) -> Optional[Dict[str, Any]]:
     if not isinstance(portfolio_snapshot, dict) or not stock_code:
         return None
@@ -72,11 +84,11 @@ def _find_position(portfolio_snapshot: Optional[Dict[str, Any]], stock_code: Opt
     return None
 
 
-def _floor_to_lot_shares(value: Optional[float], price: Optional[float]) -> Optional[int]:
-    if value is None or price is None or price <= 0:
+def _floor_to_lot_shares(value: Optional[float], price: Optional[float], lot_size: Optional[int] = A_SHARE_LOT_SIZE) -> Optional[int]:
+    if value is None or price is None or price <= 0 or lot_size is None or lot_size <= 0:
         return None
     raw_shares = int(float(value) // float(price))
-    return (raw_shares // A_SHARE_LOT_SIZE) * A_SHARE_LOT_SIZE
+    return (raw_shares // lot_size) * lot_size
 
 
 def _build_account_constraints(
@@ -103,13 +115,16 @@ def _build_account_constraints(
 
     candidates = [value for value in (target_entry_value, max_additional_value, total_cash) if value is not None]
     cash_limited_value = min(candidates) if candidates else None
-    suggested_shares = _floor_to_lot_shares(cash_limited_value, current_price)
+    lot_size = _resolve_lot_size(stock_code)
+    suggested_shares = _floor_to_lot_shares(cash_limited_value, current_price, lot_size)
 
     if suggested_shares is not None:
         if suggested_shares > 0:
-            risk_notes.append("账户约束已按100股一手取整，实际成交需再看盘中流动性与滑点。")
+            risk_notes.append(f"账户约束已按{lot_size}股一手取整，实际成交需再看盘中流动性与滑点。")
         else:
             risk_notes.append("账户约束后不足一手，不生成实际买入股数。")
+    elif lot_size is None:
+        risk_notes.append("暂未接入该市场最小交易单位，不生成实际买入股数。")
 
     return {
         "has_position": has_position,
@@ -121,7 +136,7 @@ def _build_account_constraints(
         "max_additional_value": _round_money(max_additional_value),
         "cash_limited_value": _round_money(cash_limited_value),
         "suggested_shares": suggested_shares,
-        "lot_size": A_SHARE_LOT_SIZE,
+        "lot_size": lot_size,
         "price_used": _round_money(current_price),
     }
 
@@ -180,6 +195,26 @@ def build_execution_plan(
     }
 
 
+def _is_final_buy_decision(result: Any) -> bool:
+    decision_type = str(getattr(result, "decision_type", "") or "").strip().lower()
+    if decision_type == "buy":
+        return True
+    advice = str(getattr(result, "operation_advice", "") or "").strip().lower()
+    return advice in {"买入", "加仓", "buy", "add", "add_position", "strong buy", "strong_buy"}
+
+
+def _has_hard_guardrail(result: Any) -> bool:
+    report = getattr(result, "normalization_report", None)
+    if not isinstance(report, dict):
+        return False
+    if report.get("max_severity") == "hard_guardrail":
+        return True
+    for record in report.get("applied_rules", []) or []:
+        if isinstance(record, dict) and record.get("changed") and record.get("severity") == "hard_guardrail":
+            return True
+    return False
+
+
 def build_execution_plan_map(
     results: Iterable[Any],
     *,
@@ -194,10 +229,14 @@ def build_execution_plan_map(
         code = getattr(result, "code", None)
         if not code:
             continue
-        plan_map[code] = build_execution_plan(
+        if not _is_final_buy_decision(result) or _has_hard_guardrail(result):
+            continue
+        plan = build_execution_plan(
             payload,
             portfolio_snapshot=portfolio_snapshot,
             stock_code=code,
             current_price=getattr(result, "current_price", None),
         )
+        if plan.get("eligible_for_l3"):
+            plan_map[code] = plan
     return plan_map

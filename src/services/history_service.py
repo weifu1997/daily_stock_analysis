@@ -68,7 +68,7 @@ class HistoryService:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         page: int = 1,
-        limit: int = 20
+        limit: int = 20,
     ) -> Dict[str, Any]:
         """
         Get history analysis list.
@@ -135,7 +135,7 @@ class HistoryService:
             logger.error(f"查询历史列表失败: {e}", exc_info=True)
             return {"total": 0, "items": []}
 
-    def _resolve_record(self, record_id: str):
+    def _resolve_record(self, record_id: str) -> Any:
         """
         Resolve a record_id parameter to an AnalysisHistory object.
 
@@ -587,6 +587,7 @@ class HistoryService:
                 decision_type=raw_result.get("decision_type", "hold"),
                 confidence_level=raw_result.get("confidence_level", "中"),
                 report_language=normalize_report_language(raw_result.get("report_language")),
+                prompt_version=raw_result.get("prompt_version", getattr(record, "prompt_version", None)),
                 dashboard=dashboard,
                 trend_analysis=raw_result.get("trend_analysis", ""),
                 short_term_outlook=raw_result.get("short_term_outlook", ""),
@@ -610,6 +611,9 @@ class HistoryService:
                 data_sources=raw_result.get("data_sources", ""),
                 success=raw_result.get("success", True),
                 error_message=raw_result.get("error_message"),
+                normalization_report=raw_result.get("normalization_report"),
+                candidate_layer_score=raw_result.get("candidate_layer_score"),
+                execution_plan=raw_result.get("execution_plan"),
                 current_price=raw_result.get("current_price"),
                 change_pct=raw_result.get("change_pct"),
                 model_used=raw_result.get("model_used"),

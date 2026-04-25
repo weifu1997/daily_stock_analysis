@@ -95,7 +95,7 @@ class AgentModelsResponse(BaseModel):
 
 
 @router.get("/models", response_model=AgentModelsResponse)
-async def get_agent_models():
+async def get_agent_models() -> AgentModelsResponse:
     """Get configured Agent model deployments for frontend selection."""
     config = get_config()
     return AgentModelsResponse(
@@ -103,7 +103,7 @@ async def get_agent_models():
     )
 
 
-def _build_skills_response(config) -> SkillsResponse:
+def _build_skills_response(config: Any) -> SkillsResponse:
     from src.agent.factory import get_skill_manager
     from src.agent.skills.defaults import get_primary_default_skill_id
 
@@ -131,7 +131,7 @@ def _build_skills_response(config) -> SkillsResponse:
 
 
 @router.get("/skills", response_model=SkillsResponse)
-async def get_skills():
+async def get_skills() -> SkillsResponse:
     """
     Get available agent strategy skills.
     """
@@ -139,7 +139,7 @@ async def get_skills():
 
 
 @router.get("/strategies", response_model=StrategiesResponse, include_in_schema=False)
-async def get_strategies():
+async def get_strategies() -> StrategiesResponse:
     """Compatibility alias for legacy clients."""
     payload = _build_skills_response(get_config())
     return StrategiesResponse(
@@ -219,7 +219,7 @@ class SessionMessagesResponse(BaseModel):
 async def list_chat_sessions(
     limit: int = 50,
     user_id: Optional[str] = Query(None, description="平台前缀用户标识，如 feishu_ou_xxx")
-):
+) -> SessionsResponse:
     """获取聊天会话列表
 
     当提供 user_id 时，仅返回该用户前缀的会话；未提供时返回空列表。
@@ -240,7 +240,7 @@ async def get_chat_session_messages(
     session_id: str,
     limit: int = 100,
     user_id: Optional[str] = Query(None, description="平台前缀用户标识")
-):
+) -> SessionMessagesResponse:
     """获取单个会话的完整消息"""
     if user_id and not session_id.startswith(user_id):
         raise HTTPException(
@@ -256,7 +256,7 @@ async def get_chat_session_messages(
 async def delete_chat_session(
     session_id: str,
     user_id: Optional[str] = Query(None, description="平台前缀用户标识")
-):
+) -> Dict[str, int]:
     """删除指定会话"""
     if user_id and not session_id.startswith(user_id):
         raise HTTPException(
@@ -276,7 +276,7 @@ class SendChatRequest(BaseModel):
 
 
 @router.post("/chat/send")
-async def send_chat_to_notification(request: SendChatRequest):
+async def send_chat_to_notification(request: SendChatRequest) -> Dict[str, Any]:
     """
     Send chat session content to configured notification channels.
     Uses run_in_executor to avoid blocking the event loop.
@@ -297,7 +297,7 @@ async def send_chat_to_notification(request: SendChatRequest):
     return {"success": True}
 
 
-def _build_executor(config, skills: Optional[List[str]] = None):
+def _build_executor(config: Any, skills: Optional[List[str]] = None):
     """Build and return a configured AgentExecutor (sync helper)."""
     from src.agent.factory import build_agent_executor
     return build_agent_executor(config, skills=skills)
@@ -309,7 +309,7 @@ async def _run_research_in_background(
     context: Optional[Dict[str, Any]],
     *,
     timeout: int,
-):
+) -> Any:
     """Run deep research off the event loop with an internal overall timeout."""
     return await asyncio.to_thread(
         agent.research,
@@ -336,7 +336,7 @@ class ResearchResponse(BaseModel):
 
 
 @router.post("/research", response_model=ResearchResponse)
-async def agent_research(request: ResearchRequest):
+async def agent_research(request: ResearchRequest) -> ResearchResponse:
     """Run a deep-research query via the ResearchAgent.
 
     Similar to the ``/research`` bot command but exposed as a REST endpoint.
@@ -401,7 +401,7 @@ async def agent_research(request: ResearchRequest):
 async def agent_chat_stream(
     request: ChatRequest,
     owner_id: Optional[str] = Depends(get_current_owner_id),
-):
+) -> StreamingResponse:
     """
     Chat with the AI Agent, streaming progress via SSE.
     """

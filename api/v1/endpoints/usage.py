@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Tuple
 
 from fastapi import APIRouter, Depends, Query
 
@@ -21,7 +22,7 @@ router = APIRouter()
 _VALID_PERIODS = {"today", "month", "all"}
 
 
-def _date_range(period: str):
+def _date_range(period: str) -> Tuple[datetime, datetime]:
     """Return (from_dt, to_dt) as naive datetimes in Beijing time (UTC+8)."""
     now = datetime.now(tz=_CST).replace(tzinfo=None)  # naive, Beijing local
     if period == "today":

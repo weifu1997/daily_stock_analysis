@@ -40,7 +40,7 @@ from src.search_service import SearchService
 from src.services.social_sentiment_service import SocialSentimentService
 from src.services.candidate_enrichment import CandidateEnrichmentService
 from src.services.candidate_scoring_service import CandidateScoringService
-from src.analysis.execution import build_execution_plan_map
+from src.analysis.execution import build_execution_plan, build_execution_plan_map
 
 
 @dataclass
@@ -583,7 +583,10 @@ class StockAnalysisPipeline:
             result.candidate_layer_score = candidate_layer_score
         normalization_report = normalize_analysis_result(
             result,
-            AnalysisNormalizationContext(portfolio_context=inputs.portfolio_context),
+            AnalysisNormalizationContext(
+                portfolio_context=inputs.portfolio_context,
+                require_candidate_layer_score=True,
+            ),
         )
         if result is not None:
             result.normalization_report = normalization_report.to_dict()
@@ -651,12 +654,21 @@ class StockAnalysisPipeline:
         if result and result.success:
             try:
                 self._emit_progress(97, f"{stock_name}：正在保存分析报告")
+                if result.execution_plan is None:
+                    result.execution_plan = build_execution_plan(
+                        result.candidate_layer_score,
+                        portfolio_snapshot=self._get_cached_portfolio_snapshot(),
+                        stock_code=result.code,
+                        current_price=result.current_price,
+                    )
                 context_snapshot = self._build_context_snapshot(
                     enhanced_context=enhanced_context,
                     news_content=news_context,
                     realtime_quote=inputs.realtime_quote,
                     chip_data=inputs.chip_data,
                 )
+                if result.execution_plan is not None:
+                    context_snapshot["execution_plan"] = result.execution_plan
                 self.db.save_analysis_history(
                     result=result,
                     query_id=query_id,
@@ -701,11 +713,18 @@ class StockAnalysisPipeline:
             if self._should_use_agent():
                 logger.info(f"{stock_name}({code}) 启用 Agent 模式进行分析")
                 self._emit_progress(58, f"{stock_name}：正在切换 Agent 分析链路")
+                candidate_layer_score = self._build_candidate_layer_score(
+                    code=code,
+                    stock_name=stock_name,
+                    inputs=inputs,
+                )
                 return self._analyze_with_agent(
                     code, report_type, query_id, stock_name,
                     inputs.realtime_quote, inputs.chip_data,
                     inputs.fundamental_context, inputs.trend_result,
                     inputs.portfolio_context,
+                    candidate_layer_score=candidate_layer_score,
+                    candidate_source=candidate_source,
                 )
 
             return self._run_traditional_analysis(code, report_type, query_id, inputs)
@@ -1084,6 +1103,8 @@ class StockAnalysisPipeline:
         fundamental_context: Optional[Dict[str, Any]] = None,
         trend_result: Optional[TrendAnalysisResult] = None,
         portfolio_context: Optional[PortfolioContext] = None,
+        candidate_layer_score: Optional[Dict[str, Any]] = None,
+        candidate_source: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """
         使用 Agent 模式分析单只股票。
@@ -1105,6 +1126,10 @@ class StockAnalysisPipeline:
             }
             if portfolio_context is not None:
                 initial_context["portfolio_context"] = portfolio_context.to_dict()
+            if candidate_layer_score is not None:
+                initial_context["candidate_layer_score"] = candidate_layer_score
+            if candidate_source is not None:
+                initial_context["candidate_source"] = candidate_source
             
             if realtime_quote:
                 initial_context["realtime_quote"] = self._safe_to_dict(realtime_quote)
@@ -1138,9 +1163,14 @@ class StockAnalysisPipeline:
 
             # 转换为 AnalysisResult
             result = self._agent_result_to_analysis_result(agent_result, code, stock_name, report_type, query_id)
+            if result is not None:
+                result.candidate_layer_score = candidate_layer_score
             normalization_report = normalize_analysis_result(
                 result,
-                AnalysisNormalizationContext(portfolio_context=portfolio_context),
+                AnalysisNormalizationContext(
+                    portfolio_context=portfolio_context,
+                    require_candidate_layer_score=True,
+                ),
             )
             if result:
                 result.normalization_report = normalization_report.to_dict()
@@ -1204,6 +1234,15 @@ class StockAnalysisPipeline:
             if result and result.success:
                 try:
                     initial_context["stock_name"] = resolved_stock_name
+                    if result.execution_plan is None:
+                        result.execution_plan = build_execution_plan(
+                            result.candidate_layer_score,
+                            portfolio_snapshot=self._get_cached_portfolio_snapshot(),
+                            stock_code=result.code,
+                            current_price=result.current_price,
+                        )
+                    if result.execution_plan is not None:
+                        initial_context["execution_plan"] = result.execution_plan
                     self.db.save_analysis_history(
                         result=result,
                         query_id=query_id,
@@ -1780,9 +1819,9 @@ class StockAnalysisPipeline:
                 "action": getattr(result, "operation_advice", None),
                 "position_no": position.get("no_position"),
                 "position_has": position.get("has_position"),
-                "invalidation_condition": sniper.get("stop_loss") or result.risk_warning or core.get("one_sentence") or result.analysis_summary,
+                "invalidation_condition": sniper.get("stop_loss") or getattr(result, "risk_warning", "") or core.get("one_sentence") or getattr(result, "analysis_summary", ""),
                 "right_side_trigger": checklist[0] if checklist else core.get("time_sensitivity") or "",
-                "no_trade_reason": result.risk_warning or (risk_alerts[0] if risk_alerts else ""),
+                "no_trade_reason": getattr(result, "risk_warning", "") or (risk_alerts[0] if risk_alerts else ""),
                 "risk_summary": "；".join(str(item) for item in risk_alerts[:2]) if risk_alerts else "",
                 "observation_item": observation_item,
                 "stop_loss": sniper.get("stop_loss"),
@@ -1799,11 +1838,17 @@ class StockAnalysisPipeline:
 
     def _build_report_extra_context(self, results: List[AnalysisResult]) -> Dict[str, Any]:
         """Build extra_context shared by render/save/push paths."""
+        persisted_execution_plan_map = {
+            result.code: result.execution_plan
+            for result in (results or [])
+            if isinstance(getattr(result, "execution_plan", None), dict)
+            and getattr(result, "execution_plan", {}).get("eligible_for_l3")
+        }
         return {
             "portfolio_contexts": self._build_portfolio_context_map(results),
             "report_quality_map": self._build_report_quality_context_map(results),
             "candidate_score_map": self._build_candidate_score_context_map(results),
-            "execution_plan_map": self._build_execution_plan_context_map(results),
+            "execution_plan_map": persisted_execution_plan_map or self._build_execution_plan_context_map(results),
             "report_decision_map": self._build_report_decision_context_map(results),
         }
 

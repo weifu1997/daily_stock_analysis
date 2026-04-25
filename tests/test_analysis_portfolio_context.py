@@ -547,7 +547,7 @@ def test_normalization_l2_gate_blocks_buy_below_near_strong_threshold() -> None:
         "entry_hint": "观察为主，等待右侧结构修复。",
     }
 
-    report = normalize_analysis_result(result, AnalysisNormalizationContext())
+    report = normalize_analysis_result(result, AnalysisNormalizationContext(require_candidate_layer_score=True))
 
     assert result.decision_type == "hold"
     assert result.operation_advice == "持有"
@@ -584,7 +584,7 @@ def test_normalization_l2_gate_holds_near_strong_buy_for_observation() -> None:
         "entry_hint": "趋势结构可观察，但仍需放量突破或回踩确认。",
     }
 
-    report = normalize_analysis_result(result, AnalysisNormalizationContext())
+    report = normalize_analysis_result(result, AnalysisNormalizationContext(require_candidate_layer_score=True))
 
     assert result.decision_type == "hold"
     assert result.operation_advice == "持有"
@@ -610,7 +610,7 @@ def test_normalization_l2_gate_allows_strong_right_side_candidate_to_l3() -> Non
         "trade_bias": "right_side_candidate",
     }
 
-    report = normalize_analysis_result(result, AnalysisNormalizationContext())
+    report = normalize_analysis_result(result, AnalysisNormalizationContext(require_candidate_layer_score=True))
 
     assert result.decision_type == "buy"
     assert result.operation_advice == "买入"

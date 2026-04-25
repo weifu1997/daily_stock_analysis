@@ -84,6 +84,7 @@ _ALLOWED_TEMPLATE_ROOTS = {
     "candidate_layer_summary",
     "execution_plan_map",
     "execution_plan",
+    "account_constraints",
     "risk_item",
     "report_decision_map",
     "history_by_code",
@@ -102,6 +103,7 @@ _ALLOWED_TEMPLATE_ROOTS = {
     "get_result_guardrail_traces",
     "clean_sniper",
     "failed_checks",
+    "factor_breakdown",
     "market_snapshot",
     "execution_policy_note",
     # Template-local helpers/variables used inside Jinja control flow

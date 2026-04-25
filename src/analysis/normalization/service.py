@@ -90,11 +90,33 @@ class L2CandidateGateRule:
     def apply(result: "AnalysisResult", context: AnalysisNormalizationContext) -> None:
         if str(getattr(result, "decision_type", "hold") or "hold").strip().lower() != "buy":
             return
+        if not getattr(context, "require_candidate_layer_score", False):
+            return
         payload = _get_candidate_layer_score(result)
         if not payload:
+            result.decision_type = "hold"
+            result.operation_advice = localized_operation_advice_for_signal(
+                "hold",
+                getattr(result, "report_language", "zh"),
+            )
+            _set_core_conclusion(
+                result,
+                no_position="L2二筛数据不可用，空仓者不买入，等待评分恢复或右侧确认。",
+                has_position="L2二筛数据不可用，持仓者按原风控计划管理，不新增仓位。",
+            )
             return
         score = _safe_l2_score(payload.get("score"))
         if score is None:
+            result.decision_type = "hold"
+            result.operation_advice = localized_operation_advice_for_signal(
+                "hold",
+                getattr(result, "report_language", "zh"),
+            )
+            _set_core_conclusion(
+                result,
+                no_position="L2二筛数据不可用，空仓者不买入，等待评分恢复或右侧确认。",
+                has_position="L2二筛数据不可用，持仓者按原风控计划管理，不新增仓位。",
+            )
             return
         trade_bias = str(payload.get("trade_bias") or "").strip().lower()
         if score >= L2_L3_GATE_THRESHOLD and trade_bias == "right_side_candidate":
@@ -136,7 +158,9 @@ class L2CandidateGateRule:
             if after_score is not None and after_score >= L2_L3_GATE_THRESHOLD and after_bias == "right_side_candidate":
                 return "info", "l2_candidate_gate_passed"
             return "info", "l2_candidate_gate_no_change"
-        if after_score is not None and after_score >= L2_NEAR_STRONG_THRESHOLD:
+        if after_score is None:
+            return "hard_guardrail", "l2_candidate_score_missing_blocked"
+        if after_score >= L2_NEAR_STRONG_THRESHOLD:
             return "hard_guardrail", "l2_candidate_gate_near_strong_observation"
         return "hard_guardrail", "l2_candidate_gate_buy_blocked"
 
