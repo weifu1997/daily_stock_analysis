@@ -697,6 +697,7 @@ class DataFetcherManager:
         try:
             self.close()
         except Exception:
+            logger.warning("data_provider exception")
             # Best-effort cleanup during interpreter shutdown.
             pass
 
@@ -1564,6 +1565,7 @@ class DataFetcherManager:
                 circuit_breaker.record_inconclusive(source_key)
                 _record_chip_event(fetcher_name, "empty", "returned_none_or_empty")
             except Exception as e:
+                logger.warning("data_provider exception: %s", e)
                 err = str(e)
                 lowered = err.lower()
                 if fetcher_name == "TushareFetcher":
@@ -1955,6 +1957,7 @@ class DataFetcherManager:
             try:
                 result_holder["value"] = task()
             except Exception as exc:
+                logger.warning("data_provider exception: %s", e)
                 error_holder["value"] = exc
             finally:
                 try:
@@ -1966,6 +1969,7 @@ class DataFetcherManager:
         try:
             worker.start()
         except Exception as exc:
+            logger.warning("data_provider exception: %s", e)
             try:
                 self._fundamental_timeout_slots.release()
             except ValueError:
@@ -2822,6 +2826,7 @@ class DataFetcherManager:
                         }
                     )
                 except Exception as e:
+                    logger.warning("data_provider exception: %s", e)
                     error_type, error_reason = summarize_exception(e)
                     last_error = f"{fetcher.name} ({error_type}) {error_reason}"
                     duration_ms = int((time.time() - start) * 1000)

@@ -445,7 +445,7 @@ class TavilySearchProvider(BaseSearchProvider):
             # 检查是否是配额问题
             if 'rate limit' in error_msg.lower() or 'quota' in error_msg.lower() or 'usage limit' in error_msg.lower():
                 error_msg = f"API 配额已用尽: {error_msg}"
-            
+            logger.warning(f"[Tavily] 搜索失败: {error_msg}")
             return SearchResponse(
                 query=query,
                 results=[],
@@ -743,6 +743,7 @@ class SerpAPISearchProvider(BaseSearchProvider):
             )
             
         except Exception as e:
+            logger.warning("search_service exception: %s", e)
             error_msg = str(e)
             return SearchResponse(
                 query=query,
@@ -1016,6 +1017,7 @@ class BochaSearchProvider(BaseSearchProvider):
                     else:
                         error_message = response.text
                 except Exception:
+                    logger.warning("search_service exception")
                     error_message = response.text
                 
                 # 根据错误码处理
@@ -1352,6 +1354,7 @@ class MiniMaxSearchProvider(BaseSearchProvider):
                 return msg
             return response.text[:200]
         except Exception:
+            logger.warning("search_service exception")
             return f"HTTP {response.status_code}: {response.text[:200]}"
 
 class BraveSearchProvider(BaseSearchProvider):
@@ -1516,6 +1519,7 @@ class BraveSearchProvider(BaseSearchProvider):
                 return str(error_data)
             return response.text[:200]
         except Exception:
+            logger.warning("search_service exception")
             return f"HTTP {response.status_code}: {response.text[:200]}"
 
     def search(
@@ -1596,6 +1600,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
             body = raw_text.strip() if isinstance(raw_text, str) else ""
             return body[:200] if body else f"HTTP {response.status_code}"
         except Exception:
+            logger.warning("search_service exception")
             raw_text = getattr(response, "text", "")
             body = raw_text if isinstance(raw_text, str) else ""
             return f"HTTP {response.status_code}: {body[:200]}"
@@ -1775,6 +1780,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
             try:
                 data = response.json()
             except Exception:
+                logger.warning("search_service exception")
                 return SearchResponse(
                     query=query,
                     results=[],
@@ -1851,6 +1857,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
                 error_message=f"网络请求失败: {e}",
             )
         except Exception as e:
+            logger.warning("search_service exception: %s", e)
             return SearchResponse(
                 query=query,
                 results=[],

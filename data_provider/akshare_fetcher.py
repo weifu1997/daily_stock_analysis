@@ -427,6 +427,7 @@ class AkshareFetcher(BaseFetcher):
                 return pd.DataFrame()
 
         except Exception as e:
+            logger.warning("akshare_fetcher exception: %s", e)
             error_msg = str(e).lower()
             if any(keyword in error_msg for keyword in ['banned', 'blocked', '频率', 'rate', '限制']):
                 raise RateLimitError(f"Akshare(EM) 可能被限流: {e}") from e
@@ -476,6 +477,7 @@ class AkshareFetcher(BaseFetcher):
             return pd.DataFrame()
 
         except Exception as e:
+            logger.warning("akshare_fetcher exception: %s", e)
             raise e
 
     def _fetch_stock_data_tx(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -519,6 +521,7 @@ class AkshareFetcher(BaseFetcher):
             return pd.DataFrame()
 
         except Exception as e:
+            logger.warning("akshare_fetcher exception: %s", e)
             raise e
     
     def _fetch_etf_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -1058,6 +1061,7 @@ class AkshareFetcher(BaseFetcher):
             return quote
             
         except Exception as e:
+            logger.warning("akshare_fetcher exception: %s", e)
             api_elapsed = time.time() - api_start
             category, detail = _classify_realtime_http_error(e)
             failure_message = _build_realtime_failure_message(
@@ -1209,6 +1213,7 @@ class AkshareFetcher(BaseFetcher):
             return quote
             
         except Exception as e:
+            logger.warning("akshare_fetcher exception: %s", e)
             api_elapsed = time.time() - api_start
             category, detail = _classify_realtime_http_error(e)
             failure_message = _build_realtime_failure_message(
@@ -1528,6 +1533,7 @@ class AkshareFetcher(BaseFetcher):
             return chip
 
         except Exception as e:
+            logger.warning("akshare_fetcher exception: %s", e)
             err = str(e)
             lowered = err.lower()
             if "remotedisconnected" in lowered or "connection without response" in lowered:
@@ -1833,6 +1839,7 @@ if __name__ == "__main__":
         print(f"[股票] 获取成功，共 {len(df)} 条数据")
         print(df.tail())
     except Exception as e:
+        logger.warning("akshare_fetcher exception: %s", e)
         print(f"[股票] 获取失败: {e}")
     
     # 测试 ETF 基金
@@ -1844,6 +1851,7 @@ if __name__ == "__main__":
         print(f"[ETF] 获取成功，共 {len(df)} 条数据")
         print(df.tail())
     except Exception as e:
+        logger.warning("akshare_fetcher exception: %s", e)
         print(f"[ETF] 获取失败: {e}")
     
     # 测试 ETF 实时行情
@@ -1857,6 +1865,7 @@ if __name__ == "__main__":
         else:
             print("[ETF实时] 未获取到数据")
     except Exception as e:
+        logger.warning("akshare_fetcher exception: %s", e)
         print(f"[ETF实时] 获取失败: {e}")
     
     # 测试港股历史数据
@@ -1868,6 +1877,7 @@ if __name__ == "__main__":
         print(f"[港股] 获取成功，共 {len(df)} 条数据")
         print(df.tail())
     except Exception as e:
+        logger.warning("akshare_fetcher exception: %s", e)
         print(f"[港股] 获取失败: {e}")
     
     # 测试港股实时行情
@@ -1881,6 +1891,7 @@ if __name__ == "__main__":
         else:
             print("[港股实时] 未获取到数据")
     except Exception as e:
+        logger.warning("akshare_fetcher exception: %s", e)
         print(f"[港股实时] 获取失败: {e}")
 
     # 测试市场统计
@@ -1898,6 +1909,7 @@ if __name__ == "__main__":
         else:
             print("Failed to compute market stats.")
     except Exception as e:
+        logger.warning("akshare_fetcher exception: %s", e)
         print(f"Failed to compute market stats: {e}")
 
     # 测试筹码分布数据
@@ -1907,6 +1919,7 @@ if __name__ == "__main__":
     try:
         chip = fetcher.get_chip_distribution('600519')  # 茅台
     except Exception as e:
+        logger.warning("akshare_fetcher exception: %s", e)
         print(f"[筹码分布] 获取失败: {e}")
 
     # 测试行业板块排名
@@ -1926,4 +1939,5 @@ if __name__ == "__main__":
         else:
             print("未获取到行业板块排名数据")
     except Exception as e:
+        logger.warning("akshare_fetcher exception: %s", e)
         print(f"[行业板块排名] 获取失败: {e}")
