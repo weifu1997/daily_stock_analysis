@@ -11,13 +11,13 @@ def _strong_candidate(**extra):
     return payload
 
 
-def test_l3_execution_plan_blocks_below_strong_threshold() -> None:
-    plan = build_execution_plan({"score": 17, "trade_bias": "watch", "entry_hint": "等待右侧确认"})
+def test_l3_execution_plan_allows_right_side_candidate_without_score_threshold() -> None:
+    plan = build_execution_plan({"score": 17, "trade_bias": "right_side_candidate", "entry_hint": "等待右侧确认"})
 
-    assert plan["eligible_for_l3"] is False
-    assert plan["action"] == "no_trade"
-    assert plan["reason_code"] == "l2_not_eligible_for_l3"
-    assert plan["hard_stop_loss_pct"] is None
+    assert plan["eligible_for_l3"] is True
+    assert plan["action"] == "watch_for_entry"
+    assert plan["hard_stop_loss_pct"] == -8
+    assert plan["time_stop_days"] == 30
 
 
 def test_l3_execution_plan_blocks_strong_score_without_right_side_bias() -> None:

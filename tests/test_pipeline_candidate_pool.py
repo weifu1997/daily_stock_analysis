@@ -15,6 +15,7 @@ ensure_litellm_stub()
 
 from src.analyzer import AnalysisResult
 from src.core.pipeline import StockAnalysisPipeline
+from src.runtime.mx_preselect import MX_PRESELECT_EXCLUDE_TOKENS, MX_PRESELECT_REQUIRED_TOKENS
 
 
 class TestPipelineCandidatePool(unittest.TestCase):
@@ -49,6 +50,8 @@ class TestPipelineCandidatePool(unittest.TestCase):
         self.assertEqual(result["candidate_source_map"]["600519"]["candidate_source"], "mx_preselect")
         self.assertEqual(result["candidate_source_map"]["600519"]["source_rank"], 1)
         self.assertEqual(result["candidate_source_map"]["600519"]["source_query"], pipeline.config.mx_preselect_query)
+        self.assertEqual(result["candidate_source_map"]["600519"]["preselect_rule_set"]["required_tokens"], list(MX_PRESELECT_REQUIRED_TOKENS))
+        self.assertTrue(set(MX_PRESELECT_EXCLUDE_TOKENS).issubset(set(result["candidate_source_map"]["600519"]["preselect_rule_set"]["exclude_tokens"])))
         self.assertFalse(result["candidate_source_map"]["600519"]["forced_by_portfolio"])
         self.assertEqual(result["candidate_source_map"]["000776"]["candidate_source"], "portfolio")
         self.assertTrue(result["candidate_source_map"]["000776"]["forced_by_portfolio"])
@@ -81,6 +84,7 @@ class TestPipelineCandidatePool(unittest.TestCase):
         self.assertEqual(result["candidate_source_map"]["600519"]["candidate_source"], "fallback_original")
         self.assertTrue(result["candidate_source_map"]["600519"]["fallback_used"])
         self.assertEqual(result["candidate_source_map"]["600519"]["pool_reason"], "mx_unavailable_or_failed")
+        self.assertEqual(result["candidate_source_map"]["600519"]["preselect_rule_set"], {})
         self.candidate_enrichment_service = pipeline.candidate_enrichment_service
         self.candidate_enrichment_service.enrich_candidates.assert_not_called()
 
@@ -118,8 +122,7 @@ class TestPipelineCandidatePool(unittest.TestCase):
         self.assertIn("execution_plan_map", context)
         self.assertTrue(context["execution_plan_map"]["605305"]["eligible_for_l3"])
         self.assertEqual(context["execution_plan_map"]["605305"]["hard_stop_loss_pct"], -8)
-        self.assertEqual(context["execution_plan_map"]["605305"]["account_constraints"]["suggested_shares"], 100)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

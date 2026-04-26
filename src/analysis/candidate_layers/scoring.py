@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from .models import CandidateLayerMetrics, CandidateScoreResult
+from .models import (
+    CandidateLayerMetrics,
+    CandidateScoreResult,
+    L2_EXCLUDE_TRADE_BIAS,
+    L2_RIGHT_SIDE_TRADE_BIAS,
+    L2_SCORE_VERSION,
+    L2_WATCH_TRADE_BIAS,
+)
 
 
 def _fmt(value: Optional[float], digits: int = 2) -> str:
@@ -30,7 +37,7 @@ def _build_no_trade_reason(risk_flags: List[str], excluded: bool, exclude_reason
 
 
 def _build_entry_hint(trade_bias: str, no_trade_reason: Optional[str], metrics: CandidateLayerMetrics) -> str:
-    if trade_bias == "right_side_candidate":
+    if trade_bias == L2_RIGHT_SIDE_TRADE_BIAS:
         return "右侧候选：等待放量突破后回踩不破再考虑，不追高。"
     if no_trade_reason:
         return f"先观察：{no_trade_reason}；未出现右侧确认前不作为买入依据。"
@@ -196,13 +203,26 @@ def score_metrics(metrics: CandidateLayerMetrics) -> CandidateScoreResult:
     else:
         rating = "★☆☆☆☆ 排除" if excluded else "★★☆☆☆ 观察"
 
-    trade_bias = "watch"
-    if rating.startswith("★★★★★") and metrics.ma_bullish and metrics.ma20_up and (metrics.volume_ratio_20_120 or 0) >= 1.05:
-        trade_bias = "right_side_candidate"
+    trade_bias = L2_WATCH_TRADE_BIAS
+    if excluded:
+        trade_bias = L2_EXCLUDE_TRADE_BIAS
+    elif rating.startswith("★★★★★") and metrics.ma_bullish and metrics.ma20_up and (metrics.volume_ratio_20_120 or 0) >= 1.05:
+        trade_bias = L2_RIGHT_SIDE_TRADE_BIAS
 
     deduped_risk_flags = list(dict.fromkeys(risk_flags))
     no_trade_reason = _build_no_trade_reason(deduped_risk_flags, excluded, exclude_reason)
     entry_hint = _build_entry_hint(trade_bias, no_trade_reason, metrics)
+    observation_flag = trade_bias != L2_EXCLUDE_TRADE_BIAS
+
+    score_breakdown = {
+        "version": L2_SCORE_VERSION,
+        "total_score": int(round(score)),
+        "factor_scores": factor_scores,
+        "factors": factor_breakdown,
+        "risk_flags": deduped_risk_flags,
+        "trade_bias": trade_bias,
+        "excluded": excluded,
+    }
 
     return CandidateScoreResult(
         code=metrics.code,
@@ -210,13 +230,16 @@ def score_metrics(metrics: CandidateLayerMetrics) -> CandidateScoreResult:
         score=int(round(score)),
         rating=rating,
         trade_bias=trade_bias,
+        observation_flag=observation_flag,
         excluded=excluded,
         factor_scores=factor_scores,
+        score_breakdown=score_breakdown,
         factor_breakdown=factor_breakdown,
         core_logic="；".join(logic_parts) if logic_parts else "数据不足，无法形成完整二筛结论",
         risk_flags=deduped_risk_flags,
         exclude_reason=exclude_reason,
         no_trade_reason=no_trade_reason,
         entry_hint=entry_hint,
+        score_version=L2_SCORE_VERSION,
         metrics=metrics.to_dict(),
     )

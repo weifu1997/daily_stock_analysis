@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional
 
-L3_MIN_SCORE = 18
 INITIAL_POSITION_FRACTION = 0.33
 MAX_SINGLE_STOCK_WEIGHT = 0.10
 HARD_STOP_LOSS_PCT = -8
@@ -18,6 +17,7 @@ TIME_STOP_DAYS = 30
 A_SHARE_LOT_SIZE = 100
 DEFAULT_ENTRY_CONDITION = "等待 MACD 金叉、KDJ 低位金叉、布林带收口突破共同确认"
 CONFIRMED_ENTRY_CONDITION = "右侧触发已确认：MACD金叉 + KDJ低位金叉 + 布林带收口突破 + 量能确认"
+L3_EXECUTION_VERSION = "2026-04-25.l3-v1"
 
 
 def _safe_score(value: Any) -> Optional[float]:
@@ -274,13 +274,33 @@ def build_execution_plan(
 ) -> Dict[str, Any]:
     """Build a minimal L3 execution plan from one L2 score payload."""
     payload = candidate_layer_score if isinstance(candidate_layer_score, dict) else {}
+    if not isinstance(payload, dict):
+        raise TypeError(f"candidate_layer_score must be dict, got {type(candidate_layer_score).__name__}")
+
+    # Validate L2 payload has minimum required fields before proceeding
+    required_for_l3 = {"score", "trade_bias"}
+    missing = required_for_l3 - set(payload.keys())
+    if missing:
+        return {
+            "eligible_for_l3": False,
+            "action": "no_trade",
+            "reason_code": "l2_missing_score",
+            "entry_condition": None,
+            "initial_position_fraction": None,
+            "max_single_stock_weight": None,
+            "hard_stop_loss_pct": None,
+            "time_stop_days": None,
+            "account_constraints": None,
+            "risk_notes": [],
+            "execution_version": L3_EXECUTION_VERSION,
+        }
     score = _safe_score(payload.get("score"))
     trade_bias = str(payload.get("trade_bias") or "").strip().lower()
 
     base: Dict[str, Any] = {
         "eligible_for_l3": False,
         "action": "no_trade",
-        "reason_code": "l2_missing_score" if score is None else "l2_not_eligible_for_l3",
+        "reason_code": "l2_missing_score" if score is None else "l2_not_right_side_candidate",
         "entry_condition": None,
         "initial_position_fraction": None,
         "max_single_stock_weight": None,
@@ -288,10 +308,9 @@ def build_execution_plan(
         "time_stop_days": None,
         "account_constraints": None,
         "risk_notes": [],
+        "execution_version": L3_EXECUTION_VERSION,
     }
     if score is None:
-        return base
-    if score < L3_MIN_SCORE:
         return base
     if trade_bias != "right_side_candidate":
         base["reason_code"] = "l2_not_right_side_candidate"
@@ -324,6 +343,7 @@ def build_execution_plan(
         "time_stop_days": TIME_STOP_DAYS,
         "account_constraints": account_constraints,
         "risk_notes": risk_notes,
+        "execution_version": L3_EXECUTION_VERSION,
     }
 
 

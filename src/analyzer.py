@@ -22,6 +22,9 @@ import litellm
 from json_repair import repair_json
 from litellm import Router
 
+# 自动丢弃不支持的参数（如 gpt-5 不支持 temperature=0.7）
+litellm.drop_params = True
+
 from src.agent.llm_adapter import get_thinking_extra_body
 from src.agent.skills.defaults import CORE_TRADING_SKILL_POLICY_ZH
 from src.config import (

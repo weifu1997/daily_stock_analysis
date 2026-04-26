@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple
 
 from data_provider.base import canonical_stock_code
 from src.config import Config
+from src.runtime.mx_preselect import resolve_mx_profile_query
 from src.services.mx_name_cache import cache_stock_name
 
 logger = logging.getLogger(__name__)
@@ -37,16 +38,6 @@ def _resolve_scheduled_stock_codes(stock_codes: Optional[List[str]]) -> Optional
     return None
 
 
-def _resolve_mx_profile_query(profile: Optional[str]) -> Optional[str]:
-    if not profile:
-        return None
-    return {
-        'trend': 'A股 正常交易 近期突破 量价配合 成交量放大 排除ST 排除停牌',
-        'fundamental': 'A股 正常交易 非ST 非停牌 低估值 高ROE 业绩稳定 经营现金流良好 财务健康 排除科创板 排除创业板 排除北交所',
-        'basic': 'A股 正常交易 排除ST 排除停牌 排除异常标的',
-    }.get(profile.strip().lower())
-
-
 def _resolve_mx_preselect_settings(config: Config) -> tuple[Optional[str], Optional[str]]:
     """方案A：生产主链只认 .env / 持久化配置。"""
     env_query = (getattr(config, 'mx_preselect_query', None) or '').strip()
@@ -55,7 +46,7 @@ def _resolve_mx_preselect_settings(config: Config) -> tuple[Optional[str], Optio
 
     env_profile = (getattr(config, 'mx_preselect_profile', None) or '').strip().lower()
     if env_profile:
-        profile_query = _resolve_mx_profile_query(env_profile)
+        profile_query = resolve_mx_profile_query(env_profile)
         if profile_query:
             return profile_query, f'env_profile:{env_profile}'
 

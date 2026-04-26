@@ -41,6 +41,7 @@ from src.services.social_sentiment_service import SocialSentimentService
 from src.services.candidate_enrichment import CandidateEnrichmentService
 from src.services.candidate_scoring_service import CandidateScoringService
 from src.analysis.execution import build_execution_plan, build_execution_plan_map
+from src.runtime.mx_preselect import MX_PRESELECT_PROFILES, MX_PRESELECT_EXCLUDE_TOKENS, MX_PRESELECT_REQUIRED_TOKENS, resolve_mx_profile_query, validate_preselect_query
 
 
 @dataclass
@@ -705,7 +706,7 @@ class StockAnalysisPipeline:
                 try:
                     setattr(inputs, "candidate_source", candidate_source)
                 except Exception:
-                    pass
+                    logger.debug("无法设置 candidate_source，跳过")
             stock_name = inputs.stock_name
 
             self._emit_progress(32, f"{stock_name}：正在聚合基本面与趋势数据")
@@ -756,6 +757,7 @@ class StockAnalysisPipeline:
                 realtime_quote=inputs.realtime_quote,
                 portfolio_context=inputs.portfolio_context,
             )
+            score.assert_required_fields()
             return score.to_dict()
         except Exception as e:
             logger.warning("[%s] 构建 candidate_layer_score 失败（fail-open）: %s", code, e, exc_info=True)
@@ -1522,11 +1524,13 @@ class StockAnalysisPipeline:
             try:
                 return value.to_dict()
             except Exception:
+                logger.debug("value.to_dict() 失败，返回 None")
                 return None
         if hasattr(value, "__dict__"):
             try:
                 return dict(value.__dict__)
             except Exception:
+                logger.debug("dict(value.__dict__) 失败，返回 None")
                 return None
         return None
 
@@ -1900,6 +1904,13 @@ class StockAnalysisPipeline:
         fallback_used = True
         query_text = (getattr(self.config, "mx_preselect_query", None) or "").strip()
         profile = (getattr(self.config, "mx_preselect_profile", None) or "").strip().lower()
+        profile_query = MX_PRESELECT_PROFILES.get(profile) if profile else None
+
+        effective_query = query_text or profile_query or ""
+        if effective_query:
+            violations = validate_preselect_query(effective_query)
+            if violations:
+                logger.warning("[pipeline] preselect query validation failed: %s", violations)
 
         mx_xuangu_pool: List[str] = []
         if mx_enabled and normalized_original:
@@ -1943,6 +1954,8 @@ class StockAnalysisPipeline:
                         f"mx_xuangu applied with profile={profile or 'default'}; "
                         f"seed={len(normalized_original)}, selected={len(mx_xuangu_pool)}, limit={preselect_limit}"
                     )
+                    if profile_query:
+                        mx_reason += f"; profile_query={profile_query}"
                     mx_source = "mx_preselect"
                     fallback_used = False
                 else:
@@ -1951,6 +1964,8 @@ class StockAnalysisPipeline:
                         if code and code not in mx_candidate_pool:
                             mx_candidate_pool.append(code)
                     mx_reason = f"mx_xuangu empty result; keep original pool, seed={len(normalized_original)}"
+                    if profile_query:
+                        mx_reason += f"; profile_query={profile_query}"
                     mx_source = "mx_empty_result"
                     fallback_used = False
             except Exception as exc:
@@ -1997,6 +2012,13 @@ class StockAnalysisPipeline:
                 "pool_reason": pool_reason,
                 "forced_by_portfolio": forced_by_portfolio,
                 "fallback_used": fallback_used,
+                "preselect_rule_set": {
+                    "query_text": query_text,
+                    "profile": profile,
+                    "profile_query": profile_query,
+                    "required_tokens": list(MX_PRESELECT_REQUIRED_TOKENS),
+                    "exclude_tokens": list(MX_PRESELECT_EXCLUDE_TOKENS),
+                } if candidate_source == "mx_preselect" else {},
             }
 
         logger.info(

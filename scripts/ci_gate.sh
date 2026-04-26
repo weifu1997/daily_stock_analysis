@@ -15,6 +15,14 @@ flake8_checks() {
   flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 }
 
+ruff_checks() {
+  echo "==> backend-gate: ruff import and format checks"
+  # F401: unused imports, F811: redefined while unused (catches duplicate imports)
+  ruff check . --select=F401,F811 --exclude=.venv --exclude=__pycache__ --exclude=node_modules
+  # Optional: auto-fix unused imports in CI (dry-run first to see what would change)
+  # ruff check . --select=F401,F811 --fix --dry-run --exclude=.venv --exclude=__pycache__ --exclude=node_modules
+}
+
 deterministic_checks() {
   echo "==> backend-gate: local deterministic checks"
   ./test.sh code
@@ -29,6 +37,7 @@ offline_test_suite() {
 run_all() {
   syntax_check
   flake8_checks
+  ruff_checks
   deterministic_checks
   offline_test_suite
   echo "==> backend-gate: all checks passed"
@@ -46,6 +55,9 @@ case "$phase" in
   flake8)
     flake8_checks
     ;;
+  ruff)
+    ruff_checks
+    ;;
   deterministic)
     deterministic_checks
     ;;
@@ -53,7 +65,7 @@ case "$phase" in
     offline_test_suite
     ;;
   *)
-    echo "Usage: $0 [all|syntax|flake8|deterministic|offline-tests]" >&2
+    echo "Usage: $0 [all|syntax|flake8|ruff|deterministic|offline-tests]" >&2
     exit 2
     ;;
 esac

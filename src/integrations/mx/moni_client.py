@@ -19,7 +19,7 @@ def _resolve_skill_file() -> Path:
     env_dir = (os.getenv('MX_MONI_SKILL_DIR') or os.getenv('MX_SKILL_DIR') or '').strip()
     if env_dir:
         return Path(env_dir).expanduser() / 'mx_moni.py'
-    return Path('/root/.openclaw/workspace/skills/mx-moni/mx_moni.py')
+    return Path('/root/.hermes/skills/mx-moni/mx_moni.py')
 
 
 class MxMoniClient:

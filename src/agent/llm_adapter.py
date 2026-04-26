@@ -16,6 +16,9 @@ from typing import Any, Dict, List, Optional
 import litellm
 from litellm import Router
 
+# 自动丢弃不支持的参数（如 gpt-5 不支持 temperature=0.7）
+litellm.drop_params = True
+
 from src.config import (
     extra_litellm_params,
     get_api_keys_for_model,
