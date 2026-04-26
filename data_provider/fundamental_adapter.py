@@ -74,12 +74,14 @@ def _safe_datetime(value: Any) -> Optional[datetime]:
     try:
         parsed = pd.to_datetime(value)
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return None
     if pd.isna(parsed):
         return None
     try:
         return parsed.to_pydatetime()
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return None
 
 
@@ -156,6 +158,7 @@ def _filter_rows_by_code(df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
             if not filtered.empty:
                 return filtered
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             continue
     return pd.DataFrame()
 
@@ -254,6 +257,7 @@ def _extract_latest_row(df: pd.DataFrame, stock_code: str) -> Optional[pd.Series
                 if not matched.empty:
                     return matched.iloc[0]
             except Exception:
+                logger.warning("Broad exception caught", exc_info=True)
                 continue
         return None
 
@@ -272,6 +276,7 @@ class AkshareFundamentalAdapter:
         try:
             import akshare as ak
         except Exception as exc:
+            logger.warning(f"Broad exception caught: {exc}", exc_info=True)
             return None, None, [f"import_akshare:{type(exc).__name__}"]
 
         for func_name, kwargs in candidates:
@@ -285,6 +290,7 @@ class AkshareFundamentalAdapter:
                 if isinstance(df, pd.DataFrame) and not df.empty:
                     return df, func_name, errors
             except Exception as exc:
+                logger.warning(f"Broad exception caught: {exc}", exc_info=True)
                 errors.append(f"{func_name}:{type(exc).__name__}")
                 continue
         return None, None, errors
@@ -548,6 +554,7 @@ class AkshareFundamentalAdapter:
                     matched = cur
                     break
             except Exception:
+                logger.warning("Broad exception caught", exc_info=True)
                 continue
         if matched.empty:
             result["source_chain"].append(f"dragon_tiger:{source}")
@@ -561,6 +568,7 @@ class AkshareFundamentalAdapter:
                 try:
                     parsed_dates.append(pd.to_datetime(val).to_pydatetime())
                 except Exception:
+                    logger.warning("Broad exception caught", exc_info=True)
                     continue
         now = datetime.now()
         start = now - timedelta(days=max(1, lookback_days))

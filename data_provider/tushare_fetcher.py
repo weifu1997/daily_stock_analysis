@@ -306,6 +306,7 @@ class TushareFetcher(BaseFetcher):
         try:
             return method(**kwargs)
         except Exception as exc:
+            logger.warning(f"Broad exception caught: {exc}", exc_info=True)
             error_msg = str(exc).lower()
             if any(keyword in error_msg for keyword in ['quota', '配额', 'limit', '权限']):
                 self._record_temporary_quota_block(method_name, str(exc))
@@ -1617,6 +1618,7 @@ if __name__ == "__main__":
         print(f"股票名称: {name}")
         
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"获取失败: {e}")
 
     # 测试市场统计
@@ -1634,6 +1636,7 @@ if __name__ == "__main__":
         else:
             print("Failed to compute market stats.")
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"Failed to compute market stats: {e}")
 
 
@@ -1644,6 +1647,7 @@ if __name__ == "__main__":
     try:
         chip = fetcher.get_chip_distribution('600519')  # 茅台
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"[筹码分布] 获取失败: {e}")
 
     # 测试行业板块排名
@@ -1663,4 +1667,5 @@ if __name__ == "__main__":
         else:
             print("未获取到行业板块排名数据")
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"[行业板块排名] 获取失败: {e}")

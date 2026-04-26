@@ -78,6 +78,7 @@ class TickFlowFetcher(BaseFetcher):
         try:
             self.close()
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             # Best-effort cleanup during interpreter shutdown.
             pass
 

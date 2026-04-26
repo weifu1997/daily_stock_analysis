@@ -126,6 +126,7 @@ class EmailSender:
         try:
             server.quit()
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             try:
                 server.close()
             except Exception:

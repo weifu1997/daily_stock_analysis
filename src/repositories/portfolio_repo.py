@@ -162,6 +162,7 @@ class PortfolioRepository:
                 raise PortfolioBusyError("Portfolio ledger is busy; please retry shortly.") from exc
             raise
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             session.rollback()
             raise
         finally:

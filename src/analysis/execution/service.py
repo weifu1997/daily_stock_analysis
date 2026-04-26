@@ -10,6 +10,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 INITIAL_POSITION_FRACTION = 0.33
 MAX_SINGLE_STOCK_WEIGHT = 0.10
 HARD_STOP_LOSS_PCT = -8
@@ -29,6 +33,7 @@ def _safe_score(value: Any) -> Optional[float]:
             return None
         return score
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return None
 
 
@@ -41,6 +46,7 @@ def _safe_float(value: Any) -> Optional[float]:
             return None
         return number
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return None
 
 

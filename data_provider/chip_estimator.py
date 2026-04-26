@@ -27,6 +27,10 @@ from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class EstimatedChipDistribution:
@@ -148,6 +152,7 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
             return default
         return x
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return default
 
 

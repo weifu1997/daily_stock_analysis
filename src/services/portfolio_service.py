@@ -26,6 +26,7 @@ PortfolioBusyError = RepoPortfolioBusyError
 try:
     import yfinance as yf
 except Exception:  # pragma: no cover - optional dependency path
+    logger.warning("Broad exception caught", exc_info=True)
     yf = None
 
 EPS = 1e-8

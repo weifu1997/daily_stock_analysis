@@ -134,6 +134,7 @@ def markdown_to_image(markdown_text: str, max_chars: int = 15000) -> Optional[by
 
         engine = getattr(get_config(), "md2img_engine", "wkhtmltoimage")
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         engine = "wkhtmltoimage"
 
     if engine == "markdown-to-file":

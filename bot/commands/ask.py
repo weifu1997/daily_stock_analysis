@@ -313,6 +313,7 @@ class AskCommand(BotCommand):
                 conversation_manager.add_message(session_id, "assistant", error_note)
                 return (stock_code, None, result.error or "未知错误")
             except Exception as exc:
+                logger.warning(f"Broad exception caught: {exc}", exc_info=True)
                 return (stock_code, None, str(exc))
 
         # Warm up DB connections before parallel history writes.
@@ -328,6 +329,7 @@ class AskCommand(BotCommand):
                     else:
                         errors[code] = error or "未知错误"
                 except Exception as exc:
+                    logger.warning(f"Broad exception caught: {exc}", exc_info=True)
                     code = future_map[future]
                     errors[code] = f"执行异常: {exc}"
         except FutureTimeoutError:
@@ -343,6 +345,7 @@ class AskCommand(BotCommand):
                         else:
                             errors[code] = error or "未知错误"
                     except Exception as exc:
+                        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
                         errors[code] = f"执行异常: {exc}"
                 else:
                     errors[code] = "分析超时（未在 150 秒内完成）"

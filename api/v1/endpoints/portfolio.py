@@ -98,6 +98,7 @@ def create_account(request: PortfolioAccountCreateRequest) -> PortfolioAccountIt
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Create account failed", exc)
 
 
@@ -116,6 +117,7 @@ def list_accounts(
         rows = service.list_accounts(include_inactive=include_inactive, owner_id=owner_id)
         return PortfolioAccountListResponse(accounts=[PortfolioAccountItem(**item) for item in rows])
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("List accounts failed", exc)
 
 
@@ -148,6 +150,7 @@ def update_account(account_id: int, request: PortfolioAccountUpdateRequest, owne
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Update account failed", exc)
 
 
@@ -169,6 +172,7 @@ def delete_account(account_id: int, owner_id: Optional[str] = Depends(get_curren
     except HTTPException:
         raise
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Deactivate account failed", exc)
 
 
@@ -205,6 +209,7 @@ def create_trade(request: PortfolioTradeCreateRequest) -> PortfolioEventCreatedR
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Create trade failed", exc)
 
 
@@ -240,6 +245,7 @@ def list_trades(
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("List trade events failed", exc)
 
 
@@ -264,6 +270,7 @@ def delete_trade(trade_id: int) -> PortfolioDeleteResponse:
     except HTTPException:
         raise
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Delete trade event failed", exc)
 
 
@@ -290,6 +297,7 @@ def create_cash_ledger(request: PortfolioCashLedgerCreateRequest) -> PortfolioEv
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Create cash ledger event failed", exc)
 
 
@@ -323,6 +331,7 @@ def list_cash_ledger(
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("List cash ledger events failed", exc)
 
 
@@ -347,6 +356,7 @@ def delete_cash_ledger(entry_id: int) -> PortfolioDeleteResponse:
     except HTTPException:
         raise
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Delete cash ledger event failed", exc)
 
 
@@ -376,6 +386,7 @@ def create_corporate_action(request: PortfolioCorporateActionCreateRequest) -> P
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Create corporate action event failed", exc)
 
 
@@ -411,6 +422,7 @@ def list_corporate_actions(
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("List corporate action events failed", exc)
 
 
@@ -435,6 +447,7 @@ def delete_corporate_action(action_id: int) -> PortfolioDeleteResponse:
     except HTTPException:
         raise
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Delete corporate action event failed", exc)
 
 
@@ -462,6 +475,7 @@ def get_snapshot(
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Get snapshot failed", exc)
 
 
@@ -490,6 +504,7 @@ def parse_csv_import(
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Parse CSV import failed", exc)
 
 
@@ -504,6 +519,7 @@ def list_csv_brokers() -> PortfolioImportBrokerListResponse:
     try:
         return PortfolioImportBrokerListResponse(brokers=importer.list_supported_brokers())
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("List CSV brokers failed", exc)
 
 
@@ -533,6 +549,7 @@ def commit_csv_import(
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Commit CSV import failed", exc)
 
 
@@ -553,6 +570,7 @@ def refresh_fx_rates(
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Refresh FX rates failed", exc)
 
 
@@ -574,4 +592,5 @@ def get_risk_report(
     except ValueError as exc:
         raise _bad_request(exc)
     except Exception as exc:
+        logger.warning(f"Broad exception caught: {exc}", exc_info=True)
         raise _internal_error("Get risk report failed", exc)

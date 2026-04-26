@@ -126,6 +126,7 @@ def _normalize_tool_stock_code(value: Any) -> Any:
 
         return canonical_stock_code(normalize_stock_code(text))
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return text
 
 
@@ -265,6 +266,7 @@ def try_parse_json(text: str) -> Optional[Dict[str, Any]]:
     try:
         from json_repair import repair_json
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         repair_json = None
 
     if repair_json is not None:
@@ -286,6 +288,7 @@ def _try_repair_json(text: str, repair_fn: Callable) -> Optional[Dict[str, Any]]
         obj = json.loads(repaired)
         return obj if isinstance(obj, dict) else None
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return None
 
 

@@ -1173,6 +1173,7 @@ if __name__ == "__main__":
         print(f"[股票] 获取成功，共 {len(df)} 条数据")
         print(df.tail())
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"[股票] 获取失败: {e}")
     
     # 测试 ETF 基金
@@ -1184,6 +1185,7 @@ if __name__ == "__main__":
         print(f"[ETF] 获取成功，共 {len(df)} 条数据")
         print(df.tail())
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"[ETF] 获取失败: {e}")
     
     # 测试实时行情
@@ -1197,6 +1199,7 @@ if __name__ == "__main__":
         else:
             print("[实时行情] 未获取到数据")
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"[实时行情] 获取失败: {e}")
     
     # 测试基本信息
@@ -1210,6 +1213,7 @@ if __name__ == "__main__":
         else:
             print("[基本信息] 未获取到数据")
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"[基本信息] 获取失败: {e}")
 
     # 测试市场统计 
@@ -1227,4 +1231,5 @@ if __name__ == "__main__":
         else:
             print("Failed to compute market stats.")
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"Failed to compute market stats: {e}")

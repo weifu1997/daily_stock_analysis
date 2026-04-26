@@ -232,6 +232,7 @@ class BaostockFetcher(BaseFetcher):
                 return df
                 
             except Exception as e:
+                logger.warning(f"Broad exception caught: {e}", exc_info=True)
                 if isinstance(e, DataFetchError):
                     raise
                 raise DataFetchError(f"Baostock 获取数据失败: {e}") from e
@@ -376,4 +377,5 @@ if __name__ == "__main__":
         print(f"股票名称: {name}")
         
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"获取失败: {e}")

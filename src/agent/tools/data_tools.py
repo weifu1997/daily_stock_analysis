@@ -385,6 +385,7 @@ def _handle_get_stock_info(stock_code: str) -> dict:
     try:
         stock_name = manager.get_stock_name(stock_code) or stock_name
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         pass
 
     return {

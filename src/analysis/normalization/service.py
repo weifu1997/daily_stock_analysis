@@ -12,6 +12,10 @@ from .models import (
 )
 from .portfolio_rules import HolderStructureRule, PortfolioContextRule
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 RISK_PENALTY_DEFAULT_THRESHOLD = 0.7
 L2_NEAR_STRONG_THRESHOLD = 14
 L2_L3_GATE_THRESHOLD = 18
@@ -26,6 +30,7 @@ def _safe_l2_score(value: Any) -> Optional[float]:
             return None
         return score
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return None
 
 
@@ -66,6 +71,7 @@ def _normalize_risk_penalty(value: Any) -> float:
             return 0.0
         return normalized
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return 0.0
 
 

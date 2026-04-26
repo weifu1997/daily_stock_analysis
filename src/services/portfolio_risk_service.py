@@ -10,6 +10,10 @@ from src.config import Config, get_config
 from src.repositories.portfolio_repo import PortfolioRepository
 from src.services.portfolio_service import PortfolioService
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class PortfolioRiskService:
     """Compute portfolio risk blocks on top of replayed snapshot data."""
@@ -295,6 +299,7 @@ class PortfolioRiskService:
                 board_cache[cache_key] = sector_name
                 return board_cache[cache_key]
         except Exception as exc:
+            logger.warning(f"Broad exception caught: {exc}", exc_info=True)
             coverage["failed_count"] += 1
             errors.append(f"{symbol}: {exc}")
 
@@ -343,6 +348,7 @@ class PortfolioRiskService:
             self._data_manager = DataFetcherManager()
             return self._data_manager
         except Exception as exc:  # pragma: no cover - fail-open initialization
+            logger.warning(f"Broad exception caught: {exc}", exc_info=True)
             self._data_manager_init_error = str(exc)
             return None
 

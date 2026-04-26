@@ -84,6 +84,7 @@ class AgentMemory:
             enabled = getattr(config, "agent_memory_enabled", False)
             return cls(enabled=enabled)
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             return cls(enabled=False)
 
     # -----------------------------------------------------------------
@@ -226,6 +227,7 @@ class AgentMemory:
                 }
             return {"available": False}
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             return {"available": False}
 
     def get_strategy_performance(self, strategy_id: str) -> Dict[str, Any]:
@@ -308,5 +310,6 @@ class AgentMemory:
                     "avg_confidence": 0.6,  # approximate from historical data
                 }
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             pass
         return {"total": 0, "accuracy": 0.5, "direction_accuracy": 0.5, "avg_confidence": 0.5}

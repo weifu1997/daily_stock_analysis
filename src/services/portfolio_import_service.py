@@ -167,6 +167,7 @@ class PortfolioImportService:
                 normalized["dedup_hash"] = self._build_dedup_hash(normalized)
                 records.append(normalized)
             except Exception as exc:  # pragma: no cover - defensive path
+                logger.warning(f"Broad exception caught: {exc}", exc_info=True)
                 skipped += 1
                 errors.append(f"row={idx + 1}: {exc}")
 
@@ -256,6 +257,7 @@ class PortfolioImportService:
                 failed_count += 1
                 errors.append(f"idx={i}: portfolio_busy: {exc}")
             except Exception as exc:
+                logger.warning(f"Broad exception caught: {exc}", exc_info=True)
                 failed_count += 1
                 errors.append(f"idx={i}: {exc}")
 

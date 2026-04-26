@@ -398,6 +398,7 @@ class AnalysisTaskQueue:
                         notify,
                     )
                 except Exception:
+                    logger.warning("Broad exception caught", exc_info=True)
                     # Roll back the current batch to avoid partial submission.
                     self._rollback_submitted_tasks_locked(created_task_ids + [task_id])
                     raise

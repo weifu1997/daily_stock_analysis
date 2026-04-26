@@ -55,6 +55,7 @@ def _build_llm_response_preview(response_text: str, limit: int = 300) -> str:
             parsed = json.loads(candidate)
             return json.dumps(parsed, ensure_ascii=False)
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             return None
 
     json_fence_match = re.search(r"```json\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
@@ -525,6 +526,7 @@ def record_chip_chain_event(
         c = _safe_float(confidence, default=None)
         confidence_text = f"{c:.0%}" if c is not None else "N/A"
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         confidence_text = "N/A"
     logger.info(
         "[chip_chain] %s stage=%s status=%s source=%s confidence=%s method=%s reason=%s extra=%s",

@@ -924,6 +924,7 @@ class GeminiAnalyzer:
                     progress_callback(chars_received)
                     next_emit_at = chars_received + 160
         except Exception as exc:
+            logger.warning(f"Broad exception caught: {exc}", exc_info=True)
             raise _LiteLLMStreamError(
                 f"{model} stream interrupted: {exc}",
                 partial_received=chars_received > 0,

@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pandas as pd
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from .fundamental_adapter import _normalize_report_date, _safe_float, _safe_str
 
 if TYPE_CHECKING:
@@ -147,14 +151,17 @@ class TushareFundamentalAdapter:
         try:
             top10_df = self._fetcher.get_top10_holders_df(stock_code)
         except Exception as exc:
+            logger.warning(f"Broad exception caught: {exc}", exc_info=True)
             result["errors"].append(f"top10_holders:{type(exc).__name__}")
         try:
             top10_float_df = self._fetcher.get_top10_floatholders_df(stock_code)
         except Exception as exc:
+            logger.warning(f"Broad exception caught: {exc}", exc_info=True)
             result["errors"].append(f"top10_floatholders:{type(exc).__name__}")
         try:
             holdernumber_df = self._fetcher.get_stk_holdernumber_df(stock_code)
         except Exception as exc:
+            logger.warning(f"Broad exception caught: {exc}", exc_info=True)
             result["errors"].append(f"stk_holdernumber:{type(exc).__name__}")
 
         top10_change = self._sum_hold_change(top10_df)

@@ -2335,6 +2335,7 @@ class StockAnalysisPipeline:
                     try:
                         engine = getattr(get_config(), "md2img_engine", "wkhtmltoimage")
                     except Exception:
+                        logger.warning("Broad exception caught", exc_info=True)
                         engine = "wkhtmltoimage"
                     return (
                         "npm i -g markdown-to-file" if engine == "markdown-to-file"

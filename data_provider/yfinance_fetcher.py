@@ -198,6 +198,7 @@ class YfinanceFetcher(BaseFetcher):
             return df
 
         except Exception as e:
+            logger.warning(f"Broad exception caught: {e}", exc_info=True)
             if isinstance(e, DataFetchError):
                 raise
             raise DataFetchError(f"Yahoo Finance 获取数据失败: {e}") from e
@@ -453,6 +454,7 @@ class YfinanceFetcher(BaseFetcher):
                         dt = datetime.strptime(date_text, "%Y-%m-%d")
                         close_val = float(close_text)
                     except Exception:
+                        logger.warning("Broad exception caught", exc_info=True)
                         continue
                     daily_rows.append((dt, close_val))
 
@@ -462,6 +464,7 @@ class YfinanceFetcher(BaseFetcher):
                 daily_rows.sort(key=lambda item: item[0])
                 return daily_rows[-2][1]
             except Exception:
+                logger.warning("Broad exception caught", exc_info=True)
                 return None
 
         try:
@@ -700,6 +703,7 @@ class YfinanceFetcher(BaseFetcher):
                 info_name = ticker.info.get('shortName', '') or ticker.info.get('longName', '') or ''
                 name = info_name if is_meaningful_stock_name(info_name, symbol) else STOCK_NAME_MAP.get(symbol, '')
             except Exception:
+                logger.warning("Broad exception caught", exc_info=True)
                 name = STOCK_NAME_MAP.get(symbol, '')
 
             quote = UnifiedRealtimeQuote(
@@ -743,4 +747,5 @@ if __name__ == "__main__":
         print(f"获取成功，共 {len(df)} 条数据")
         print(df.tail())
     except Exception as e:
+        logger.warning(f"Broad exception caught: {e}", exc_info=True)
         print(f"获取失败: {e}")

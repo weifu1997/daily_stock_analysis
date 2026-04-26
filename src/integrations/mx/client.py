@@ -51,6 +51,7 @@ class MxClient:
                 try:
                     data = resp.json()
                 except Exception:
+                    logger.warning("Broad exception caught", exc_info=True)
                     data = resp.text
                 return MxResponse(ok=True, data=data, source="mx", latency_ms=latency_ms, raw={"status_code": resp.status_code})
             return MxResponse(ok=False, error=f"http_{resp.status_code}", source="mx", latency_ms=latency_ms, raw={"text": resp.text[:500]})

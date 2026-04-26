@@ -15,6 +15,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 _BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "strategies"
 
@@ -96,6 +100,7 @@ def _load_builtin_skill_catalog() -> tuple[object, ...]:
 
         return tuple(load_skills_from_directory(_BUILTIN_SKILLS_DIR))
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return ()
 
 

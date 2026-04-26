@@ -863,6 +863,7 @@ class DatabaseManager:
                     continue
                 raise
             except Exception:
+                logger.warning("Broad exception caught", exc_info=True)
                 session.rollback()
                 raise
             finally:
@@ -921,6 +922,7 @@ class DatabaseManager:
         try:
             return session
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             session.close()
             raise
 
@@ -932,6 +934,7 @@ class DatabaseManager:
             yield session
             session.commit()
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             session.rollback()
             raise
         finally:
@@ -1204,6 +1207,7 @@ class DatabaseManager:
                 payload = json.loads(row.payload or "{}")
                 return payload if isinstance(payload, dict) else None
             except Exception:
+                logger.warning("Broad exception caught", exc_info=True)
                 return None
 
     def get_recent_news(self, code: str, days: int = 7, limit: int = 20) -> List[NewsIntel]:
@@ -1960,6 +1964,7 @@ class DatabaseManager:
         try:
             return json.dumps(data, ensure_ascii=False, default=str)
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             return json.dumps(str(data), ensure_ascii=False)
 
     @staticmethod

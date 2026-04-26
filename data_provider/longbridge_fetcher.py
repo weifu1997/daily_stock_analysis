@@ -106,6 +106,7 @@ def _sanitize_longbridge_env() -> None:
             logger.debug("[Longbridge] 设置 LONGBRIDGE_LOG_PATH=%s",
                          os.environ["LONGBRIDGE_LOG_PATH"])
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             pass
 
     region = (os.getenv("LONGBRIDGE_REGION") or "").strip().lower()
@@ -132,11 +133,13 @@ def _longbridge_config_kwargs() -> Dict[str, Any]:
         import inspect
         from longbridge.openapi import Config, Language, PushCandlestickMode
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return {}
 
     try:
         params = inspect.signature(Config.from_apikey).parameters
     except Exception:
+        logger.warning("Broad exception caught", exc_info=True)
         return {}
 
     kw: Dict[str, Any] = {}
@@ -298,6 +301,7 @@ class LongbridgeFetcher(BaseFetcher):
                 and config.longbridge_access_token
             )
         except Exception:
+            logger.warning("Broad exception caught", exc_info=True)
             has_creds = bool(
                 os.getenv("LONGBRIDGE_APP_KEY")
                 and os.getenv("LONGBRIDGE_APP_SECRET")
@@ -329,6 +333,7 @@ class LongbridgeFetcher(BaseFetcher):
                     app_secret = app_config.longbridge_app_secret
                     access_token = app_config.longbridge_access_token
                 except Exception:
+                    logger.warning("Broad exception caught", exc_info=True)
                     app_key = os.getenv("LONGBRIDGE_APP_KEY")
                     app_secret = os.getenv("LONGBRIDGE_APP_SECRET")
                     access_token = os.getenv("LONGBRIDGE_ACCESS_TOKEN")
