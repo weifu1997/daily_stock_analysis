@@ -12,6 +12,7 @@ def localized_operation_advice_for_signal(signal: str, report_language: str) -> 
         "buy": "Buy" if normalized_language == "en" else "买入",
         "hold": "Hold" if normalized_language == "en" else "持有",
         "sell": "Sell" if normalized_language == "en" else "卖出",
+        "watch": "Watch" if normalized_language == "en" else "观望",
     }
     return signal_map.get(str(signal or "hold").strip().lower(), signal_map["hold"])
 

@@ -29,7 +29,10 @@ class PortfolioContextRule:
         advice_override = None
         decision_override = None
 
-        if "加仓" in original_advice or normalized_advice in {"add", "add position", "increase", "increase position"}:
+        # 非持仓者不应该收到"持有"建议，应改为"观望"
+        if "持有" in original_advice or normalized_advice in {"hold", "holding"}:
+            decision_override = "watch"
+        elif "加仓" in original_advice or normalized_advice in {"add", "add position", "increase", "increase position"}:
             decision_override = "buy"
         elif any(token in original_advice for token in ("减仓", "清仓")) or normalized_advice in {
             "trim",

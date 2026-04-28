@@ -685,8 +685,8 @@ class Config:
     market_review_enabled: bool = True        # 是否启用大盘复盘
     # 大盘复盘市场区域：cn(A股)、us(美股)、both(两者)，us 适合仅关注美股的用户
     market_review_region: str = "cn"
-    # 大盘复盘里“市场涨跌统计”单数据源超时（秒）；超时后继续 fallback，避免整轮被慢源拖住
-    market_stats_fetch_timeout_seconds: float = 5.0
+    # 大盘复盘里"市场涨跌统计"单数据源超时（秒）；超时后继续 fallback，避免整轮被慢源拖住
+    market_stats_fetch_timeout_seconds: float = 45.0
     # 大盘市场统计短 TTL 缓存（秒）；避免同轮/短时间重复拉取全市场快照
     market_stats_cache_ttl_seconds: int = 120
     # 交易日检查：默认启用，非交易日跳过执行；设为 false 或 --force-run 可强制执行（Issue #373）
@@ -1032,6 +1032,31 @@ class Config:
         }
 
     @classmethod
+    def _load_searxng_config(cls) -> tuple:
+        """Resolve SearXNG base URLs and public instances flag."""
+        from urllib.parse import urlparse
+
+        _raw_urls = [u.strip() for u in os.getenv('SEARXNG_BASE_URLS', '').split(',') if u.strip()]
+        searxng_base_urls = []
+        invalid_searxng_urls = []
+        for u in _raw_urls:
+            p = urlparse(u)
+            if p.scheme in ('http', 'https') and p.netloc:
+                searxng_base_urls.append(u)
+            else:
+                invalid_searxng_urls.append(u)
+        if invalid_searxng_urls:
+            logger.warning(
+                "SEARXNG_BASE_URLS 中存在无效 URL，已忽略: %s",
+                ", ".join(invalid_searxng_urls[:3]),
+            )
+        searxng_public_instances_enabled = parse_env_bool(
+            os.getenv('SEARXNG_PUBLIC_INSTANCES_ENABLED'),
+            default=True,
+        )
+        return searxng_base_urls, searxng_public_instances_enabled
+
+    @classmethod
     def _load_wechat_config(cls) -> tuple:
         """Resolve WeChat message type and max bytes."""
         wechat_msg_type = os.getenv('WECHAT_MSG_TYPE', 'markdown')
@@ -1121,24 +1146,7 @@ class Config:
         search_api_keys = cls._load_search_api_keys()
 
         # === SearXNG URLs ===
-        _raw_urls = [u.strip() for u in os.getenv('SEARXNG_BASE_URLS', '').split(',') if u.strip()]
-        searxng_base_urls = []
-        invalid_searxng_urls = []
-        for u in _raw_urls:
-            p = urlparse(u)
-            if p.scheme in ('http', 'https') and p.netloc:
-                searxng_base_urls.append(u)
-            else:
-                invalid_searxng_urls.append(u)
-        if invalid_searxng_urls:
-            logger.warning(
-                "SEARXNG_BASE_URLS 中存在无效 URL，已忽略: %s",
-                ", ".join(invalid_searxng_urls[:3]),
-            )
-        searxng_public_instances_enabled = parse_env_bool(
-            os.getenv('SEARXNG_PUBLIC_INSTANCES_ENABLED'),
-            default=True,
-        )
+        searxng_base_urls, searxng_public_instances_enabled = cls._load_searxng_config()
 
         # === 企微配置 ===
         wechat_msg_type_lower, wechat_max_bytes = cls._load_wechat_config()
@@ -1421,7 +1429,7 @@ class Config:
             ),
             market_stats_fetch_timeout_seconds=parse_env_float(
                 os.getenv('MARKET_STATS_FETCH_TIMEOUT_SECONDS'),
-                5.0,
+                45.0,
                 field_name='MARKET_STATS_FETCH_TIMEOUT_SECONDS',
                 minimum=0.0,
             ),

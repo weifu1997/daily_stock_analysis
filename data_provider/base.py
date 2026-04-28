@@ -1913,8 +1913,14 @@ class DataFetcherManager:
 
         for fetcher in non_tushare_fetchers + tushare_fetchers:
             try:
+                # Pass the fetcher instance directly to avoid lambda capture issues
+                def make_task(f):
+                    def task():
+                        return f.get_market_stats()
+                    return task
+                
                 data, err, _ = self._run_with_timeout(
-                    lambda f=fetcher: f.get_market_stats(),
+                    make_task(fetcher),
                     timeout_seconds,
                     f"market_stats:{fetcher.name}",
                 )
@@ -1957,7 +1963,7 @@ class DataFetcherManager:
             try:
                 result_holder["value"] = task()
             except Exception as exc:
-                logger.warning("data_provider exception: %s", e)
+                logger.warning("data_provider exception: %s", exc)
                 error_holder["value"] = exc
             finally:
                 try:
@@ -1969,7 +1975,7 @@ class DataFetcherManager:
         try:
             worker.start()
         except Exception as exc:
-            logger.warning("data_provider exception: %s", e)
+            logger.warning("data_provider exception: %s", exc)
             try:
                 self._fundamental_timeout_slots.release()
             except ValueError:

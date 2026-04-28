@@ -1670,7 +1670,19 @@ class AkshareFetcher(BaseFetcher):
             if df is not None and not df.empty:
                 return self._calc_market_stats(df)
         except Exception as e:
-            logger.warning(f"[Akshare] 东财接口获取市场统计失败: {e}，跳过新浪二次兜底")
+            logger.warning(f"[Akshare] 东财接口获取市场统计失败: {e}，尝试新浪兜底")
+
+        # 东财失败后，尝试新浪接口兜底
+        try:
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
+
+            logger.info("[API调用] ak.stock_zh_a_spot() 获取市场统计(新浪)...")
+            df = ak.stock_zh_a_spot()
+            if df is not None and not df.empty:
+                return self._calc_market_stats(df)
+        except Exception as e:
+            logger.warning(f"[Akshare] 新浪接口获取市场统计也失败: {e}")
 
         return None
 
